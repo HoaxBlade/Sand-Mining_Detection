@@ -1,0 +1,26 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Brahmaputra River (Guwahati Area)",
+        "waterway": "river"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [91.6025, 26.1264],
+          [91.6318, 26.1360],
+          [91.6661, 26.1593],
+          [91.6963, 26.1711],
+          [91.7138, 26.1772],
+          [91.7543, 26.1864],
+          [91.8016, 26.2104],
+          [91.8318, 26.2300],
+          [91.8654, 26.2482]
+        ]
+      }
+    }
+  ]
+}
