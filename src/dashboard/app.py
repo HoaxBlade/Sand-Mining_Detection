@@ -27,45 +27,93 @@ app = FastAPI(
     description="Real-time Edge-Cloud Pipeline with Dual Dashboard feeds and spatial queries"
 )
 
-# ── Webcam capture config ─────────────────────────────────────────────────────
-# Set CAMERA_INDEX env var to change which camera to use (default 0 = built-in)
-CAMERA_INDEX   = int(os.getenv("CAMERA_INDEX", "0"))
-CAMERA_FPS     = float(os.getenv("CAMERA_FPS", "15.0"))
-CAMERA_QUALITY = int(os.getenv("CAMERA_QUALITY", "75"))
+# ── Video source config ───────────────────────────────────────────────────────
+# Controls what feeds the two dashboard video windows.
+# cv2.VideoCapture() accepts BOTH an integer (webcam) and a string URL (RTSP),
+# so switching from webcam to drone requires only changing this env var.
+#
+# WEBCAM  (default, testing):   VIDEO_SOURCE=0       ← built-in Mac/Windows webcam
+#                                VIDEO_SOURCE=1       ← second/external webcam
+#
+# DRONE   (when hardware arrives):
+#   DJI via phone relay (DJI MSDK v5 RTSP relay app on Android):
+#                                VIDEO_SOURCE=rtsp://192.168.1.50:8554/live
+#   DJI direct RTSP (some models expose this natively):
+#                                VIDEO_SOURCE=rtsp://192.168.42.1:554/live
+#   Any generic RTSP drone/IP camera:
+#                                VIDEO_SOURCE=rtsp://<camera-ip>:<port>/<path>
+#
+# Set via environment variable before starting the server:
+#   export VIDEO_SOURCE="rtsp://192.168.1.50:8554/live"
+#   python main.py server
+#
+_raw_source  = os.getenv("VIDEO_SOURCE", "0")
+# Auto-detect: if the value is a plain integer string → webcam index, else RTSP URL
+VIDEO_SOURCE: int | str = int(_raw_source) if _raw_source.lstrip("-").isdigit() else _raw_source
+
+CAMERA_FPS     = float(os.getenv("CAMERA_FPS",     "15.0"))
+CAMERA_QUALITY = int(os.getenv("CAMERA_QUALITY",   "75"))
+
+# RTSP-specific tuning (only relevant when VIDEO_SOURCE is a URL)
+# Prefer TCP transport for reliability over Wi-Fi (default is UDP which can drop frames)
+RTSP_TRANSPORT = os.getenv("RTSP_TRANSPORT", "tcp")   # "tcp" | "udp"
 
 
-def _webcam_capture_loop():
+def _video_capture_loop():
     """
-    Background daemon thread: opens the webcam and continuously updates
-    latest_raw_frame / latest_overlay_frame so the MJPEG stream endpoints
-    always have a fresh frame to serve.
+    Background daemon thread: opens the configured video source and continuously
+    pushes JPEG frames into latest_raw_frame / latest_overlay_frame.
 
-    Runs automatically when the server starts — no separate command needed.
-    Override CAMERA_INDEX env var to select a different camera.
+    Source is controlled by the VIDEO_SOURCE env var:
+      • Integer  → local webcam (testing mode)
+      • URL str  → RTSP stream from drone or IP camera (field deployment)
+
+    No restart needed — just change VIDEO_SOURCE and reboot the server.
     """
     global latest_raw_frame, latest_overlay_frame
 
     try:
         import cv2
     except ImportError:
-        logger.warning("opencv-python not installed — webcam feed disabled.")
+        logger.warning("opencv-python not installed — video feed disabled.")
         return
 
-    logger.info(f"📷  Webcam capture starting on camera index {CAMERA_INDEX}...")
-    cap = cv2.VideoCapture(CAMERA_INDEX)
+    is_rtsp = isinstance(VIDEO_SOURCE, str)
+
+    if is_rtsp:
+        # ── DRONE / RTSP MODE ──────────────────────────────────────────────
+        # Force TCP transport for stable Wi-Fi streaming (avoids UDP packet loss).
+        # GStreamer pipeline string can be swapped here for Jetson hardware decode.
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"rtsp_transport;{RTSP_TRANSPORT}"
+        logger.info(f"🛸  Drone RTSP stream opening: {VIDEO_SOURCE}  (transport={RTSP_TRANSPORT})")
+        logger.info("    Waiting for drone to broadcast... (this may take a few seconds)")
+        cap = cv2.VideoCapture(VIDEO_SOURCE, cv2.CAP_FFMPEG)
+    else:
+        # ── WEBCAM MODE (default, no drone yet) ───────────────────────────
+        logger.info(f"📷  Webcam capture starting on camera index {VIDEO_SOURCE}...")
+        cap = cv2.VideoCapture(VIDEO_SOURCE)
+        # Request a reasonable resolution — driver will use nearest supported
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
     if not cap.isOpened():
-        logger.warning(
-            f"⚠️  Could not open camera {CAMERA_INDEX}. "
-            "Set CAMERA_INDEX env var to the correct index. Webcam feed disabled."
-        )
+        if is_rtsp:
+            logger.warning(
+                f"⚠️  Could not connect to RTSP stream: {VIDEO_SOURCE}\n"
+                "    Check that the drone is powered on, broadcasting, and on the same network.\n"
+                "    Falling back to no feed — dashboard will show placeholder."
+            )
+        else:
+            logger.warning(
+                f"⚠️  Could not open camera {VIDEO_SOURCE}. "
+                "Try a different index via VIDEO_SOURCE env var."
+            )
         return
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    logger.info(f"✅  Webcam opened at {w}x{h} — feeding both dashboard streams.")
+    source_label = f"RTSP drone stream" if is_rtsp else f"webcam {VIDEO_SOURCE}"
+    logger.info(f"✅  {source_label} opened at {w}x{h} — feeding both dashboard streams.")
 
     encode_params = [cv2.IMWRITE_JPEG_QUALITY, CAMERA_QUALITY]
     interval = 1.0 / CAMERA_FPS
@@ -73,20 +121,32 @@ def _webcam_capture_loop():
     while True:
         t0 = time.time()
         ret, frame = cap.read()
+
         if not ret:
-            time.sleep(0.05)
+            if is_rtsp:
+                # RTSP can drop temporarily (drone banking, interference) — keep retrying
+                logger.warning("⚠️  RTSP frame drop — retrying...")
+                time.sleep(0.1)
+            else:
+                time.sleep(0.05)
             continue
 
         _, buf = cv2.imencode(".jpg", frame, encode_params)
         jpeg = buf.tobytes()
 
-        # Raw feed: clean webcam frame
+        # Raw feed: clean, unprocessed frame from the camera
         latest_raw_frame = jpeg
 
-        # Overlay feed: same frame for now.
-        # When detection code is ready, process `frame` here first,
-        # draw bounding boxes on it, re-encode, and assign to latest_overlay_frame.
-        latest_overlay_frame = jpeg
+        # ── DETECTION HOOK ────────────────────────────────────────────────
+        # Overlay feed: plug your YOLO detection code in here.
+        # `frame` is the raw BGR numpy array — draw bounding boxes on it,
+        # then re-encode and assign to latest_overlay_frame.
+        # Example (replace with real inference):
+        #   results      = yolo_model(frame)
+        #   overlay      = results[0].plot()   # annotated frame
+        #   _, obuf      = cv2.imencode(".jpg", overlay, encode_params)
+        #   latest_overlay_frame = obuf.tobytes()
+        latest_overlay_frame = jpeg   # same as raw until detection is wired in
 
         elapsed = time.time() - t0
         sleep_for = interval - elapsed
@@ -143,13 +203,14 @@ latest_overlay_frame: bytes = b""
 async def startup_event():
     """
     Fires once when uvicorn starts.
-    Launches the webcam capture loop in a background daemon thread so
+    Launches the video capture loop in a background daemon thread so
     the two video windows on the dashboard show a live feed immediately.
-    No separate command or script needed.
+    Source is webcam by default; set VIDEO_SOURCE env var to switch to drone RTSP.
     """
-    t = threading.Thread(target=_webcam_capture_loop, daemon=True, name="webcam-capture")
+    t = threading.Thread(target=_video_capture_loop, daemon=True, name="video-capture")
     t.start()
-    logger.info("🎥  Webcam capture thread launched — dashboard feeds will populate shortly.")
+    source_desc = f"RTSP: {VIDEO_SOURCE}" if isinstance(VIDEO_SOURCE, str) else f"webcam {VIDEO_SOURCE}"
+    logger.info(f"🎥  Video capture thread launched ({source_desc}) — dashboard feeds will populate shortly.")
 
 # Frame generator for multipart MJPEG streaming
 async def frame_generator(stream_type: str):
