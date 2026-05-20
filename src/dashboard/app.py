@@ -2,6 +2,8 @@ import os
 import json
 import base64
 import logging
+import threading
+import time
 from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException, Request
 from fastapi.responses import StreamingResponse, HTMLResponse, Response
@@ -24,6 +26,72 @@ app = FastAPI(
     title="Illegal Sand Mining Drone Surveillance Server",
     description="Real-time Edge-Cloud Pipeline with Dual Dashboard feeds and spatial queries"
 )
+
+# ── Webcam capture config ─────────────────────────────────────────────────────
+# Set CAMERA_INDEX env var to change which camera to use (default 0 = built-in)
+CAMERA_INDEX   = int(os.getenv("CAMERA_INDEX", "0"))
+CAMERA_FPS     = float(os.getenv("CAMERA_FPS", "15.0"))
+CAMERA_QUALITY = int(os.getenv("CAMERA_QUALITY", "75"))
+
+
+def _webcam_capture_loop():
+    """
+    Background daemon thread: opens the webcam and continuously updates
+    latest_raw_frame / latest_overlay_frame so the MJPEG stream endpoints
+    always have a fresh frame to serve.
+
+    Runs automatically when the server starts — no separate command needed.
+    Override CAMERA_INDEX env var to select a different camera.
+    """
+    global latest_raw_frame, latest_overlay_frame
+
+    try:
+        import cv2
+    except ImportError:
+        logger.warning("opencv-python not installed — webcam feed disabled.")
+        return
+
+    logger.info(f"📷  Webcam capture starting on camera index {CAMERA_INDEX}...")
+    cap = cv2.VideoCapture(CAMERA_INDEX)
+
+    if not cap.isOpened():
+        logger.warning(
+            f"⚠️  Could not open camera {CAMERA_INDEX}. "
+            "Set CAMERA_INDEX env var to the correct index. Webcam feed disabled."
+        )
+        return
+
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    logger.info(f"✅  Webcam opened at {w}x{h} — feeding both dashboard streams.")
+
+    encode_params = [cv2.IMWRITE_JPEG_QUALITY, CAMERA_QUALITY]
+    interval = 1.0 / CAMERA_FPS
+
+    while True:
+        t0 = time.time()
+        ret, frame = cap.read()
+        if not ret:
+            time.sleep(0.05)
+            continue
+
+        _, buf = cv2.imencode(".jpg", frame, encode_params)
+        jpeg = buf.tobytes()
+
+        # Raw feed: clean webcam frame
+        latest_raw_frame = jpeg
+
+        # Overlay feed: same frame for now.
+        # When detection code is ready, process `frame` here first,
+        # draw bounding boxes on it, re-encode, and assign to latest_overlay_frame.
+        latest_overlay_frame = jpeg
+
+        elapsed = time.time() - t0
+        sleep_for = interval - elapsed
+        if sleep_for > 0:
+            time.sleep(sleep_for)
 
 # Mount the project's data directory so the frontend can directly load spatial GeoJSON files
 app.mount("/data", StaticFiles(directory=str(Path(__file__).resolve().parent.parent.parent / "data")), name="data")
@@ -70,6 +138,18 @@ manager = ConnectionManager()
 # which are then distributed to the dashboard HTML IMG tags.
 latest_raw_frame: bytes = b""
 latest_overlay_frame: bytes = b""
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    Fires once when uvicorn starts.
+    Launches the webcam capture loop in a background daemon thread so
+    the two video windows on the dashboard show a live feed immediately.
+    No separate command or script needed.
+    """
+    t = threading.Thread(target=_webcam_capture_loop, daemon=True, name="webcam-capture")
+    t.start()
+    logger.info("🎥  Webcam capture thread launched — dashboard feeds will populate shortly.")
 
 # Frame generator for multipart MJPEG streaming
 async def frame_generator(stream_type: str):
