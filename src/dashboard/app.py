@@ -132,6 +132,9 @@ def _video_capture_loop():
                 time.sleep(0.05)
             continue
 
+        # Flip the frame horizontally to correct webcam mirroring
+        frame = cv2.flip(frame, 1)
+
         _, buf = cv2.imencode(".jpg", frame, encode_params)
         jpeg = buf.tobytes()
 
@@ -266,10 +269,10 @@ async def _webcam_telemetry_simulation_loop():
         return
         
     raw_coords = cl_data['features'][0]['geometry']['coordinates']
-    # Filter: only keep coordinates in Assam, India (lat > 25.8)
+    # Filter: only keep coordinates in Assam, India (lat > 26.0)
     # The southern portion of the centerline crosses into Bangladesh
     # where Google Maps has no road data and directions fail.
-    raw_coords = [c for c in raw_coords if c[1] > 25.8]
+    raw_coords = [c for c in raw_coords if c[1] > 26.0]
     if len(raw_coords) < 10:
         logger.error("Not enough centerline points in India after filtering.")
         return
