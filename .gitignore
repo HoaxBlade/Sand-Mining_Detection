@@ -12,3 +12,7 @@ __pycache__/
 
 # Data
 data/local_edge.db
+
+# Scratch Folders
+scratch/
+.gemini/
