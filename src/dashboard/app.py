@@ -74,6 +74,7 @@ recording_filename = None
 recording_lock = threading.Lock()
 global_video_w = 1280
 global_video_h = 720
+local_webcam_mode = False
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -137,7 +138,8 @@ def _video_capture_loop():
         return
 
     # --- This is where your next block seamlessly connects ---
-    is_rtsp = isinstance(VIDEO_SOURCE, str)
+    is_rtsp = isinstance(VIDEO_SOURCE, str) and (VIDEO_SOURCE.startswith("rtsp://") or VIDEO_SOURCE.startswith("rtmp://") or VIDEO_SOURCE.startswith("http://") or VIDEO_SOURCE.startswith("https://"))
+    is_file = isinstance(VIDEO_SOURCE, str) and not is_rtsp
     cap = None
     use_synthetic_video = False
 
@@ -154,6 +156,10 @@ def _video_capture_loop():
                 logger.info("Drone RTSP stream opening: {} (transport={})".format(VIDEO_SOURCE, RTSP_TRANSPORT))
                 logger.info("Waiting for drone to broadcast... (this may take a few seconds)")
                 cap = cv2.VideoCapture(VIDEO_SOURCE, cv2.CAP_FFMPEG)
+            elif is_file:
+                # LOCAL VIDEO FILE (testing on VPS without webcam)
+                logger.info("Opening local video file stream: {}...".format(VIDEO_SOURCE))
+                cap = cv2.VideoCapture(VIDEO_SOURCE)
             else:
                 # WEBCAM MODE (default, no drone yet)
                 logger.info("Webcam capture starting on camera index {}...".format(VIDEO_SOURCE))
@@ -294,6 +300,11 @@ def _video_capture_loop():
             ret = True
         else:
             ret, frame = cap.read()
+            if not ret and is_file:
+                # Rewind local video file to loop infinitely!
+                logger.info("Video file ended. Rewinding back to start...")
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ret, frame = cap.read()
 
         if not ret:
             if is_rtsp:
@@ -341,13 +352,14 @@ def _video_capture_loop():
             else:
                 latest_overlay_frame = jpeg
                 latest_webcam_detections = []
-        elif _yolo_model is not None and is_at_starting_spot() and is_inside_fence():
+        elif _yolo_model is not None:
             try:
+                # Detect person (0), car (2), motorcycle (3), bus (5), truck (7)
                 results = _yolo_model(
                     frame,
                     verbose=False,
-                    classes=[0],    # 0 = person in COCO; swap for your custom class IDs later
-                    conf=0.30,      # confidence threshold  lower = catches more detections
+                    classes=[0, 2, 3, 5, 7],
+                    conf=0.30,
                     iou=0.45,
                 )
                 overlay = results[0].plot()   # annotated BGR numpy array
@@ -355,19 +367,27 @@ def _video_capture_loop():
                 latest_overlay_frame = obuf.tobytes()
 
                 # Extract and store bounding box details globally for hybrid telemetry mapping
+                # But ONLY trigger incidents when inside geofence start area!
                 active_dets = []
-                if len(results[0].boxes) > 0:
-                    for box in results[0].boxes:
-                        coords = box.xyxy[0].tolist()
-                        conf = float(box.conf[0].item())
-                        active_dets.append({
-                            'class_name': 'person',
-                            'confidence': conf,
-                            'bbox_x_min': int(coords[0]),
-                            'bbox_y_min': int(coords[1]),
-                            'bbox_x_max': int(coords[2]),
-                            'bbox_y_max': int(coords[3])
-                        })
+                if is_at_starting_spot():
+                    if len(results[0].boxes) > 0:
+                        for box in results[0].boxes:
+                            coords = box.xyxy[0].tolist()
+                            conf = float(box.conf[0].item())
+                            cls_id = int(box.cls[0].item())
+                            
+                            # Map YOLO class IDs to standard names
+                            cls_map = {0: 'person', 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
+                            class_name = cls_map.get(cls_id, 'jcb')
+                            
+                            active_dets.append({
+                                'class_name': class_name,
+                                'confidence': conf,
+                                'bbox_x_min': int(coords[0]),
+                                'bbox_y_min': int(coords[1]),
+                                'bbox_x_max': int(coords[2]),
+                                'bbox_y_max': int(coords[3])
+                            })
                 latest_webcam_detections = active_dets
             except Exception as exc:
                 logger.debug("YOLO inference error: {}".format(exc))
@@ -391,8 +411,8 @@ def _video_capture_loop():
                 pass
 
         # Write to video recorder if active
-        global is_recording, recording_writer, recording_lock
-        if is_recording:
+        global is_recording, recording_writer, recording_lock, local_webcam_mode
+        if is_recording and not local_webcam_mode:
             with recording_lock:
                 if recording_writer is not None:
                     try:
@@ -794,14 +814,82 @@ async def stream_overlay(request: Request):
 
 # Edge Frame Receiver Endpoint
 @app.post("/api/edge/frame")
-async def receive_edge_frame(stream_type, request: Request):
-    """Receives compressed JPEG frames uploaded by the Edge Jetson Nano."""
-    global latest_raw_frame, latest_overlay_frame
+async def receive_edge_frame(stream_type: str, request: Request):
+    """Receives compressed JPEG frames uploaded by the Edge Jetson Nano or local Webcam pipeline."""
+    global latest_raw_frame, latest_overlay_frame, latest_webcam_detections, is_recording, recording_writer, recording_lock, local_webcam_mode
     frame_data = await request.body()
+    if not frame_data:
+        return {"status": "ok"}
+
+    # Browser is streaming frames to us! Activate local webcam mode so recording / detection pipelines fall back to this stream
+    local_webcam_mode = True
+
     if stream_type == "raw":
         latest_raw_frame = frame_data
+        
+        # Run YOLO on the VPS when receiving webcam frames from the local laptop client!
+        try:
+            import cv2
+            import numpy as np
+            nparr = np.frombuffer(frame_data, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if frame is not None:
+                # Determine overlays and run YOLO on VPS
+                active_dets = []
+                overlay = frame.copy()
+                if _yolo_model is not None:
+                    # Detect person (0), car (2), motorcycle (3), bus (5), truck (7)
+                    results = _yolo_model(
+                        frame,
+                        verbose=False,
+                        classes=[0, 2, 3, 5, 7],
+                        conf=0.30,
+                        iou=0.45,
+                    )
+                    overlay = results[0].plot()
+                    
+                    # Extract detections
+                    if len(results[0].boxes) > 0:
+                        for box in results[0].boxes:
+                            coords = box.xyxy[0].tolist()
+                            conf = float(box.conf[0].item())
+                            cls_id = int(box.cls[0].item())
+                            
+                            cls_map = {0: 'person', 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
+                            class_name = cls_map.get(cls_id, 'jcb')
+                            
+                            active_dets.append({
+                                'class_name': class_name,
+                                'confidence': conf,
+                                'bbox_x_min': int(coords[0]),
+                                'bbox_y_min': int(coords[1]),
+                                'bbox_x_max': int(coords[2]),
+                                'bbox_y_max': int(coords[3])
+                            })
+                latest_webcam_detections = active_dets
+                
+                _, obuf = cv2.imencode(".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                latest_overlay_frame = obuf.tobytes()
+
+                # If recording is active, write browser frames to output file directly on the VPS!
+                if is_recording:
+                    with recording_lock:
+                        if recording_writer is not None:
+                            try:
+                                # Determine the final frame to write to the recording
+                                recording_frame = overlay
+                                recording_writer.write(recording_frame)
+                            except Exception as e:
+                                logger.error("Error writing frame to recording: {}".format(e))
+        except Exception as exc:
+            logger.debug("VPS received-frame YOLO error: {}".format(exc))
+            
     elif stream_type == "overlay":
-        latest_overlay_frame = frame_data
+        # Only overwrite overlay if we aren't generating it ourselves from the raw stream
+        # This keeps compatibility with the Edge pipeline which uploads its own overlay
+        if latest_overlay_frame is None or len(latest_webcam_detections) == 0:
+            latest_overlay_frame = frame_data
+            
     return {"status": "ok"}
 
 # Edge Telemetry & Event Sync Endpoint
@@ -1468,7 +1556,7 @@ def get_login_page(request: Request):
     """Serves the login page, redirects to dashboard if already authenticated."""
     user = get_session_user(request)
     if user:
-        return RedirectResponse(url="/", status_code=303)
+        return RedirectResponse(url=request.scope.get("root_path", "") + "/", status_code=303)
         
     login_path = Path(__file__).resolve().parent / "frontend" / "login.html"
     if login_path.exists():
@@ -1482,7 +1570,7 @@ def get_dashboard_page(request: Request):
     """Serves the unified, premium dark-themed operator control dashboards."""
     user = get_session_user(request)
     if not user:
-        return RedirectResponse(url="/login", status_code=303)
+        return RedirectResponse(url=request.scope.get("root_path", "") + "/login", status_code=303)
         
     dashboard_path = Path(__file__).resolve().parent / "frontend" / "index.html"
     if dashboard_path.exists():

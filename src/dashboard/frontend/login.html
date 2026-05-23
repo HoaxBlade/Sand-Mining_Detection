@@ -349,6 +349,8 @@
             portalSubtitle.textContent = 'Operator Login Portal';
         });
 
+        const BASE_PATH = window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1);
+
         // Handle Login Submission
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -361,7 +363,7 @@
             const password = passwordInput.value;
 
             try {
-                const response = await fetch('/api/auth/login', {
+                const response = await fetch(`${BASE_PATH}api/auth/login`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -375,7 +377,7 @@
                     throw new Error(data.detail || 'Authentication failed');
                 }
 
-                window.location.href = '/';
+                window.location.href = BASE_PATH;
 
             } catch (err) {
                 btnSpinner.style.display = 'none';
@@ -402,7 +404,7 @@
             const password = regPasswordInput.value;
 
             try {
-                const response = await fetch('/api/auth/register', {
+                const response = await fetch(`${BASE_PATH}api/auth/register`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -417,7 +419,7 @@
                 }
 
                 // Redirect to dashboard on successful registration (immediately logged in)
-                window.location.href = '/';
+                window.location.href = BASE_PATH;
 
             } catch (err) {
                 btnRegSpinner.style.display = 'none';
