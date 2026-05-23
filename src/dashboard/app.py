@@ -81,7 +81,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Illegal Sand Mining Drone Surveillance Server",
-    description="Real-time Edge-Cloud Pipeline with Dual Dashboard feeds and spatial queries"
+    description="Real-time Edge-Cloud Pipeline with Dual Dashboard feeds and spatial queries",
+    root_path=os.getenv("ROOT_PATH", "")
 )
 
 #  Video source config 
