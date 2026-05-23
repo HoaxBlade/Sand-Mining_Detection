@@ -13,6 +13,18 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import asyncio
 import sys
+import torch
+
+# Monkeypatch torch.load to default weights_only=False for PyTorch 2.6+ compatibility with Ultralytics YOLO
+try:
+    orig_load = torch.load
+    def patched_load(*args, **kwargs):
+        if "weights_only" not in kwargs:
+            kwargs["weights_only"] = False
+        return orig_load(*args, **kwargs)
+    torch.load = patched_load
+except Exception:
+    pass
 
 # Import database manager
 sys.path.append(str(Path(__file__).resolve().parent.parent / "preprocess"))

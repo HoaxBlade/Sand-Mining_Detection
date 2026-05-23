@@ -17,6 +17,19 @@ from typing import List, Dict, Any, Tuple
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+import torch
+
+# Monkeypatch torch.load to default weights_only=False for PyTorch 2.6+ compatibility with Ultralytics YOLO
+try:
+    orig_load = torch.load
+    def patched_load(*args, **kwargs):
+        if "weights_only" not in kwargs:
+            kwargs["weights_only"] = False
+        return orig_load(*args, **kwargs)
+    torch.load = patched_load
+except Exception:
+    pass
+
 # Add directories to system path for imports
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root / "src" / "preprocess"))

@@ -22,6 +22,7 @@ if not venv_python.exists():
 def rebuild_zones(radius_m: float = 1000.0):
     """Regenerates the river buffer GeoJSON from the latest centerline."""
     sys.path.insert(0, str(project_root / "src" / "preprocess"))
+    # pyrefly: ignore [missing-import]
     from zone_builder import build_buffer
     build_buffer(radius_m=radius_m)
 
@@ -44,6 +45,7 @@ def run_webcam_pipeline(server_url: str = "http://localhost:8000",
     """Streams webcam feeds to the dashboard (drone substitute for local testing)."""
     logger.info("📷  Starting Webcam Pipeline (drone substitute)...")
     sys.path.insert(0, str(project_root / "src" / "detection"))
+    # pyrefly: ignore [missing-import]
     from webcam_pipeline import WebcamPipeline
     WebcamPipeline(
         cloud_url=server_url,

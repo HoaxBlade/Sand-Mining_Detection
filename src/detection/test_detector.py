@@ -7,6 +7,18 @@ import argparse
 from pathlib import Path
 import cv2
 from ultralytics import YOLO
+import torch
+
+# Monkeypatch torch.load to default weights_only=False for PyTorch 2.6+ compatibility with Ultralytics YOLO
+try:
+    orig_load = torch.load
+    def patched_load(*args, **kwargs):
+        if "weights_only" not in kwargs:
+            kwargs["weights_only"] = False
+        return orig_load(*args, **kwargs)
+    torch.load = patched_load
+except Exception:
+    pass
 
 def run_inference(image_path: str, weights_path: str, output_path: str, apply_colormap: bool = False):
     path = Path(image_path)
