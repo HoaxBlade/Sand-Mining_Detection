@@ -61,7 +61,7 @@ class ClusterEngine:
             self._load_buffer_zone()   # reload Shapely geometry from updated file
             logger.info(f"Zone enforcement updated to {radius_m:.0f}m")
         else:
-            logger.warning("Buffer rebuild failed — keeping previous zone geometry")
+            logger.warning("Buffer rebuild failed  keeping previous zone geometry")
 
     def is_in_illegal_zone(self, lat: float, lon: float) -> bool:
         """Returns True if the coordinate is inside the 500m buffer zone."""

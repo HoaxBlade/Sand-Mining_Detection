@@ -1,5 +1,5 @@
 """
-Drone Receiver — Jetson Nano Component
+Drone Receiver  Jetson Nano Component
 Receives live telemetry from the Android phone relay app (DJI MSDK v5)
 over UDP, and provides a thread-safe accessor for the edge pipeline.
 
@@ -140,7 +140,7 @@ class DroneVideoCapture:
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_h)
             cap.set(cv2.CAP_PROP_FPS, 30)
         else:
-            # RTSP — reduce latency buffer
+            # RTSP  reduce latency buffer
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         with self._lock:
@@ -164,7 +164,7 @@ class DroneVideoCapture:
             if ret and frame is not None:
                 return frame
             else:
-                logger.warning("Frame read failed — stream dropped. Reconnecting...")
+                logger.warning("Frame read failed  stream dropped. Reconnecting...")
 
         # Fallback frame while reconnecting
         fallback = np.zeros((self.frame_h, self.frame_w, 3), dtype=np.uint8)

@@ -160,21 +160,21 @@ class DatabaseManager:
         cursor.execute(users_table)
         cursor.execute(recordings_table)
 
-        # ── DYNAMIC COLUMN SCHEMA MIGRATIONS ──────────────────────────────
+        #  DYNAMIC COLUMN SCHEMA MIGRATIONS 
         # WHAT: Dynamically append columns if database was pre-created before update.
         # WHY: Ensures existing databases don't break with missing column exceptions.
         if self.db_type == "sqlite":
             cursor.execute("PRAGMA table_info(incidents);")
             columns = [col[1] for col in cursor.fetchall()]
             if "evidence_image_blob" not in columns:
-                logger.info("🔧 Migrating local SQLite: adding evidence_image_blob column to incidents table...")
+                logger.info(" Migrating local SQLite: adding evidence_image_blob column to incidents table...")
                 cursor.execute("ALTER TABLE incidents ADD COLUMN evidence_image_blob BLOB;")
                 conn.commit()
 
             cursor.execute("PRAGMA table_info(users);")
             u_columns = [col[1] for col in cursor.fetchall()]
             if "email" not in u_columns:
-                logger.info("🔧 Migrating local SQLite: adding email column to users table...")
+                logger.info(" Migrating local SQLite: adding email column to users table...")
                 cursor.execute("ALTER TABLE users ADD COLUMN email VARCHAR(255);")
                 conn.commit()
         else:
@@ -231,7 +231,7 @@ class DatabaseManager:
         conn.commit()
         cursor.close()
         conn.close()
-        logger.info(f"✅ Edge database initialization complete. Active: {self.db_type.upper()}")
+        logger.info(f" Edge database initialization complete. Active: {self.db_type.upper()}")
 
 if __name__ == "__main__":
     # Test execution

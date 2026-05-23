@@ -1,5 +1,5 @@
 """
-Offline-First Sync Worker — Jetson Nano Edge Component
+Offline-First Sync Worker  Jetson Nano Edge Component
 Runs as a background thread. Detects network availability and syncs all
 unsynced incidents + telemetry to the cloud backend with exponential backoff.
 
@@ -38,7 +38,7 @@ class SyncWorker:
         self._max_backoff   = 60.0
         self.online         = False
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    #  Public API 
 
     def start(self):
         """Start the sync worker as a daemon background thread."""
@@ -50,7 +50,7 @@ class SyncWorker:
         """Signal the worker to stop gracefully."""
         self._stop_event.set()
 
-    # ── Internal loop ─────────────────────────────────────────────────────────
+    #  Internal loop 
 
     def _is_cloud_reachable(self) -> bool:
         try:
@@ -71,7 +71,7 @@ class SyncWorker:
                     # Reset backoff on success
                     self._backoff = 1.0
                 else:
-                    # Cloud offline — data is already safe on local DB, just wait
+                    # Cloud offline  data is already safe on local DB, just wait
                     logger.debug(f"[SyncWorker] Cloud unreachable. All data stored locally. "
                                  f"Retry in {self._backoff:.0f}s.")
                     self._stop_event.wait(min(self._backoff, self._max_backoff))

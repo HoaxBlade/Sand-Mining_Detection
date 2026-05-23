@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# Severity → RGB color
+# Severity  RGB color
 SEVERITY_COLORS = {
     "CRITICAL": (220, 38,  38),   # Red
     "HIGH":     (234, 88,  12),   # Orange
@@ -82,7 +82,7 @@ def generate_incident_report(
     pdf = IncidentReportPDF(mission_id=mission_id)
     pdf.alias_nb_pages()
 
-    # ── Cover Page ────────────────────────────────────────────────────────────
+    #  Cover Page 
     pdf.add_page()
 
     # Title block
@@ -132,7 +132,7 @@ def generate_incident_report(
                  new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(1)
 
-    # ── Incident Table ────────────────────────────────────────────────────────
+    #  Incident Table 
     pdf.add_page()
     _section_title(pdf, "DETECTED INCIDENTS LOG")
 
@@ -184,7 +184,7 @@ def generate_incident_report(
                 pdf.cell(w, 7, v, border=0, fill=True, align="C")
         pdf.ln()
 
-    # ── Evidence Image Gallery ────────────────────────────────────────────────
+    #  Evidence Image Gallery 
     evidence_dir = PROJECT_ROOT / "data" / "detections"
     evidence_files = sorted(evidence_dir.glob("evidence_*.jpg"))
 
@@ -224,9 +224,9 @@ def generate_incident_report(
                 col = 0
                 pdf.ln(img_h + 8)
 
-    # ── GPS Coordinates Appendix ───────────────────────────────────────────────
+    #  GPS Coordinates Appendix 
     pdf.add_page()
-    _section_title(pdf, "GPS COORDINATES — INCIDENT SITES")
+    _section_title(pdf, "GPS COORDINATES  INCIDENT SITES")
     pdf.set_font("Courier", "", 8)
     pdf.set_text_color(180, 200, 230)
 

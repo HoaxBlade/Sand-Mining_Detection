@@ -1,5 +1,5 @@
 """
-Evidence Snapshot Engine — Jetson Nano Edge Component
+Evidence Snapshot Engine  Jetson Nano Edge Component
 Saves cropped JPEG evidence images for each detection to local disk.
 Works offline-first: all saves go to data/detections/ regardless of cloud connectivity.
 Images are named deterministically: evidence_{incident_id}_{class}_{timestamp}.jpg

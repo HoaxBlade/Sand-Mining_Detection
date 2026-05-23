@@ -1,11 +1,11 @@
 """
-webcam_streamer.py — Drone Feed Simulator using Webcam
+webcam_streamer.py  Drone Feed Simulator using Webcam
 =======================================================
 Use this when you don't have the drone yet.
 It reads from your laptop webcam and streams it to the FastAPI dashboard server
 in place of the drone's RTSP/video feed.
 
-Works on macOS and Windows — OpenCV handles webcam access on both.
+Works on macOS and Windows  OpenCV handles webcam access on both.
 
 Usage:
   # Stream local webcam to local server (default)
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Webcam → Dashboard Streamer (drone feed substitute)"
+        description="Webcam  Dashboard Streamer (drone feed substitute)"
     )
     parser.add_argument(
         "--server",
@@ -73,18 +73,18 @@ def open_camera(index: int) -> cv2.VideoCapture:
 
     if not cap.isOpened():
         logger.error(
-            f"❌  Could not open camera {index}. "
+            f"  Could not open camera {index}. "
             "Try --camera 1 if you have multiple cameras, or check permissions."
         )
         sys.exit(1)
 
-    # Request a reasonable resolution — webcam driver will use nearest supported
+    # Request a reasonable resolution  webcam driver will use nearest supported
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
     actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    logger.info(f"✅  Camera opened: {actual_w}x{actual_h}")
+    logger.info(f"  Camera opened: {actual_w}x{actual_h}")
     return cap
 
 
@@ -109,10 +109,10 @@ def post_frame(server: str, stream_type: str, jpeg_bytes: bytes, session: reques
             params={"stream_type": stream_type},
             data=jpeg_bytes,
             headers={"Content-Type": "image/jpeg"},
-            timeout=0.3   # short timeout — drop frame rather than block pipeline
+            timeout=0.3   # short timeout  drop frame rather than block pipeline
         )
     except requests.RequestException:
-        # Server offline or slow — just skip this frame, keep looping
+        # Server offline or slow  just skip this frame, keep looping
         pass
 
 
@@ -124,7 +124,7 @@ def stream(args):
     session = requests.Session()
 
     logger.info(
-        f"🎥  Streaming webcam → {args.server} | "
+        f"  Streaming webcam  {args.server} | "
         f"FPS: {args.fps} | JPEG quality: {args.quality}"
     )
     logger.info("Press Ctrl+C to stop.")
@@ -138,7 +138,7 @@ def stream(args):
 
             ret, frame = cap.read()
             if not ret:
-                logger.warning("⚠️  Failed to read frame from camera. Retrying...")
+                logger.warning("  Failed to read frame from camera. Retrying...")
                 time.sleep(0.1)
                 continue
 
@@ -161,7 +161,7 @@ def stream(args):
             elapsed = time.time() - fps_timer
             if elapsed >= 5.0:
                 actual_fps = frame_count / elapsed
-                logger.info(f"📡  Streaming — actual FPS: {actual_fps:.1f}")
+                logger.info(f"  Streaming  actual FPS: {actual_fps:.1f}")
                 frame_count = 0
                 fps_timer = time.time()
 
@@ -172,7 +172,7 @@ def stream(args):
                 time.sleep(sleep_time)
 
     except KeyboardInterrupt:
-        logger.info("🛑  Stream stopped by operator.")
+        logger.info("  Stream stopped by operator.")
     finally:
         cap.release()
         session.close()

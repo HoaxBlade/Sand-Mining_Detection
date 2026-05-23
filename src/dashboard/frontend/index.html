@@ -12,7 +12,7 @@
     <!-- Leaflet.js CSS and JS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <!-- Turf.js — client-side spatial analysis for dynamic buffer drawing -->
+    <!-- Turf.js  client-side spatial analysis for dynamic buffer drawing -->
     <script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
 
     <style>
@@ -37,7 +37,7 @@
             font-family: 'JetBrains Mono', monospace;
         }
 
-        /* ── Layout helpers ─────────────────────────────────────────── */
+        /*  Layout helpers  */
         .header {
             background: #1f2937;
             border-bottom: 1px solid #374151;
@@ -85,7 +85,7 @@
             overflow: hidden;
         }
 
-        /* ── Cards / panels ─────────────────────────────────────────── */
+        /*  Cards / panels  */
         .card {
             background: #1f2937;
             border: 1px solid #374151;
@@ -93,7 +93,7 @@
             overflow: hidden;
         }
 
-        /* ── Status bar chips ──────────────────────────────────────── */
+        /*  Status bar chips  */
         .chip {
             display: inline-flex;
             align-items: center;
@@ -125,7 +125,7 @@
             background: #22c55e;
         }
 
-        /* ── Buttons ───────────────────────────────────────────────── */
+        /*  Buttons  */
         .btn {
             display: inline-flex;
             align-items: center;
@@ -165,7 +165,7 @@
             background: #991b1b;
         }
 
-        /* ── Video feed containers ─────────────────────────────────── */
+        /*  Video feed containers  */
         .feed-label {
             position: absolute;
             top: 8px;
@@ -211,7 +211,7 @@
             color: #9ca3af;
         }
 
-        /* ── Filter checkboxes ─────────────────────────────────────── */
+        /*  Filter checkboxes  */
         .filter-row {
             display: flex;
             flex-wrap: wrap;
@@ -239,7 +239,7 @@
             accent-color: #3b82f6;
         }
 
-        /* ── Map HUD overlay ───────────────────────────────────────── */
+        /*  Map HUD overlay  */
         .map-hud {
             position: absolute;
             top: 10px;
@@ -286,7 +286,7 @@
             margin: 8px 0;
         }
 
-        /* ── Slider ────────────────────────────────────────────────── */
+        /*  Slider  */
         input[type="range"] {
             width: 100%;
             height: 4px;
@@ -321,7 +321,7 @@
             color: #60a5fa;
         }
 
-        /* ── Map buttons (top-right overlay) ────────────────────────── */
+        /*  Map buttons (top-right overlay)  */
         .map-controls {
             position: absolute;
             top: 10px;
@@ -349,7 +349,7 @@
             color: #60a5fa;
         }
 
-        /* ── Stat cards (tab 2) ────────────────────────────────────── */
+        /*  Stat cards (tab 2)  */
         .stat-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -384,7 +384,7 @@
             margin-top: 2px;
         }
 
-        /* ── Audit table ───────────────────────────────────────────── */
+        /*  Audit table  */
         .audit-table {
             width: 100%;
             text-align: left;
@@ -419,7 +419,7 @@
             background: #1a2233;
         }
 
-        /* ── Severity badges ───────────────────────────────────────── */
+        /*  Severity badges  */
         .badge {
             display: inline-block;
             padding: 2px 8px;
@@ -491,7 +491,7 @@
             gap: 3px;
         }
 
-        /* ── Evidence panel ────────────────────────────────────────── */
+        /*  Evidence panel  */
         .ev-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -511,7 +511,7 @@
             color: #e5e7eb;
         }
 
-        /* ── Two-column layouts ────────────────────────────────────── */
+        /*  Two-column layouts  */
         .grid-12 {
             display: grid;
             grid-template-columns: 7fr 5fr;
@@ -526,7 +526,7 @@
             gap: 16px;
         }
 
-        /* ── Utility ───────────────────────────────────────────────── */
+        /*  Utility  */
         .hidden {
             display: none !important;
         }
@@ -569,7 +569,7 @@
             color: #e5e7eb;
         }
 
-        /* ── Responsive ────────────────────────────────────────────── */
+        /*  Responsive  */
         @media (max-width: 1024px) {
             .grid-12 {
                 grid-template-columns: 1fr;
@@ -625,7 +625,7 @@
 
 <body>
 
-    <!-- ═══ HEADER ═══ -->
+    <!--  HEADER  -->
     <header class="header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
         <div>
             <h1 style="font-size:18px; font-weight:700; color:#e5e7eb;">
@@ -684,17 +684,17 @@
         </div>
     </header>
 
-    <!-- ═══ TABS ═══ -->
+    <!--  TABS  -->
     <div class="tab-bar">
         <button id="btn-tab-tactical" class="tab-btn active">Live Dashboard</button>
         <button id="btn-tab-audit" class="tab-btn">Incident Reports</button>
         <button id="btn-tab-gallery" class="tab-btn" style="display: none;">Flight Records & Media</button>
     </div>
 
-    <!-- ═══ MAIN CONTENT ═══ -->
+    <!--  MAIN CONTENT  -->
     <main class="main-area">
 
-        <!-- ══════════ TAB 1: LIVE DASHBOARD ══════════ -->
+        <!--  TAB 1: LIVE DASHBOARD  -->
         <div id="tab-tactical" class="flex-col" style="flex:1; gap:16px; min-height:0;">
 
             <!-- Top row: feeds + map -->
@@ -706,7 +706,7 @@
                         <!-- Raw feed -->
                         <div class="card flex-col" style="position:relative;">
                             <span class="feed-label">Drone Camera</span>
-                            <span class="feed-badge feed-badge-rec">● LIVE</span>
+                            <span class="feed-badge feed-badge-rec"> LIVE</span>
                             <div
                                 style="flex:1; background:#111827; display:flex; align-items:center; justify-content:center;">
                                 <img src="/stream/raw" alt="Raw Drone Feed"
@@ -717,7 +717,7 @@
                         <!-- AI detection feed -->
                         <div class="card flex-col" style="position:relative;">
                             <span class="feed-label">AI Detection Feed</span>
-                            <span class="feed-badge feed-badge-ai">● DETECTING</span>
+                            <span class="feed-badge feed-badge-ai"> DETECTING</span>
                             <div
                                 style="flex:1; background:#111827; display:flex; align-items:center; justify-content:center;">
                                 <img src="/stream/overlay" alt="AI Detection Feed"
@@ -738,15 +738,15 @@
                         </label>
                         <label class="filter-item">
                             <input type="checkbox" id="filter-person" checked class="class-filter">
-                            <span style="color:#4ade80;">● Humans / Workers</span>
+                            <span style="color:#4ade80;"> Humans / Workers</span>
                         </label>
                         <label class="filter-item">
                             <input type="checkbox" id="filter-jcb" checked class="class-filter">
-                            <span style="color:#fbbf24;">● Excavators / JCBs</span>
+                            <span style="color:#fbbf24;"> Excavators / JCBs</span>
                         </label>
                         <label class="filter-item">
                             <input type="checkbox" id="filter-truck" checked class="class-filter">
-                            <span style="color:#60a5fa;">● Dumper Trucks</span>
+                            <span style="color:#60a5fa;"> Dumper Trucks</span>
                         </label>
                     </div>
                 </div>
@@ -769,7 +769,7 @@
                         
                         <div class="divider" style="margin: 8px 0;"></div>
                         
-                        <!-- ── ADMIN FLIGHT RECORDING SYSTEM ── -->
+                        <!--  ADMIN FLIGHT RECORDING SYSTEM  -->
                         <div id="admin-record-section" style="display: none;">
                             <h4 style="font-size: 11px; margin-bottom: 6px; color: #f87171; display: flex; align-items: center; gap: 6px;">
                                 <span id="rec-pulse-dot" class="rec-pulse" style="display:none; width: 8px; height: 8px; border-radius: 50%; background-color: #ef4444; box-shadow: 0 0 8px #ef4444;"></span>
@@ -791,7 +791,7 @@
                             <div class="divider" style="margin: 8px 0;"></div>
                         </div>
                         
-                        <!-- ── DYNAMIC MID-FLIGHT MODEL SWITCHER ── -->
+                        <!--  DYNAMIC MID-FLIGHT MODEL SWITCHER  -->
                         <h4 style="font-size: 11px; margin-bottom: 4px; color: #60a5fa;">Mid-Flight AI Model:</h4>
                         <select id="model-select" style="width:100%; padding: 4px; font-size:11px; background:#111827; border:1px solid #374151; color:#fff; border-radius:4px; outline:none; margin-bottom: 6px;">
                             <option value="yolov8n.pt">YOLOv8 Nano (Fastest)</option>
@@ -800,7 +800,7 @@
                             <option value="custom_river_model.pt">Custom Fine-Tuned Model</option>
                         </select>
                         
-                        <!-- ── DYNAMIC GEOFENCE START TRIGGER CONTROLS ── -->
+                        <!--  DYNAMIC GEOFENCE START TRIGGER CONTROLS  -->
                         <h4 style="font-size: 11px; margin-bottom: 4px; color: #34d399;">Detection Start Geofence:</h4>
                         <div style="display:flex; flex-direction:column; gap:4px; margin-bottom:6px;">
                             <div class="info-row">
@@ -822,7 +822,7 @@
                             </div>
                         </div>
                         <div style="font-size: 9px; color: #9ca3af; margin-bottom: 6px; font-style: italic;">
-                            💡 Tip: Double-click anywhere on the map to set the geofence start coordinates!
+                             Tip: Double-click anywhere on the map to set the geofence start coordinates!
                         </div>
                         
                         <div style="display:flex; gap:4px; margin-top:8px;">
@@ -849,7 +849,7 @@
             </div>
         </div>
 
-        <!-- ══════════ TAB 2: INCIDENT REPORTS ══════════ -->
+        <!--  TAB 2: INCIDENT REPORTS  -->
         <div id="tab-audit" class="hidden flex-col" style="flex:1; gap:20px; overflow-y:auto;">
 
             <!-- Stat cards -->
@@ -944,7 +944,7 @@
 
                         <!-- Empty state -->
                         <div id="evidence-empty" style="text-align:center; padding:40px 0; color:#6b7280;">
-                            <div style="font-size:32px; margin-bottom:8px;">📂</div>
+                            <div style="font-size:32px; margin-bottom:8px;"></div>
                             <div style="font-size:12px; font-weight:500;">Select an incident from the table to view
                                 details.</div>
                         </div>
@@ -1005,7 +1005,7 @@
             </div>
         </div>
 
-        <!-- ══════════ TAB 3: FLIGHT RECORDS & GALLERY ══════════ -->
+        <!--  TAB 3: FLIGHT RECORDS & GALLERY  -->
         <div id="tab-gallery" class="hidden flex-col" style="flex:1; gap:20px; overflow-y:auto;">
             <div class="grid-12" style="flex:1; gap:20px; min-height:0;">
                 <!-- Left: Flight Recording List -->
@@ -1052,7 +1052,7 @@
 
                         <!-- Standby State -->
                         <div id="player-empty" style="text-align:center; padding:100px 0; color:#6b7280;">
-                            <div style="font-size:42px; margin-bottom:12px; opacity:0.8;">🎬</div>
+                            <div style="font-size:42px; margin-bottom:12px; opacity:0.8;"></div>
                             <div style="font-size:13px; font-weight:600; color:#e5e7eb;">No Media Selected</div>
                             <div style="font-size:11px; margin-top:4px;">Select a recorded flight archive from the list to begin playback.</div>
                         </div>
@@ -1087,7 +1087,7 @@
                             Download Video File
                         </a>
                         <a id="lnk-external-video" href="#" target="_blank" class="btn" style="flex:1; justify-content:center; text-decoration:none; padding:8px 0; text-align:center; font-size:11px; border-color:#4b5563; color:#9ca3af;">
-                            Open in New Tab ↗
+                            Open in New Tab 
                         </a>
                     </div>
                 </div>
@@ -1095,7 +1095,7 @@
         </div>
     </main>
 
-    <!-- ═══════════════════════ JAVASCRIPT (UNCHANGED LOGIC) ═══════════════════════ -->
+    <!--  JAVASCRIPT (UNCHANGED LOGIC)  -->
     <script>
         // DOM Handles
         const tabTactical = document.getElementById('tab-tactical');
@@ -1241,7 +1241,7 @@
             });
         });
 
-        // ── Dynamic Buffer via Turf.js ──────────────────────────────────
+        //  Dynamic Buffer via Turf.js 
         let bufferLayer = null;
         let centerlineGeoJSON = null;
         let currentBufferM = 1000;
@@ -1372,7 +1372,7 @@
                 .catch(() => { });
         })();
 
-        // ── WebSocket ───────────────────────────────────────────────────
+        //  WebSocket 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws`;
         let ws;
@@ -1483,7 +1483,7 @@
                             <span style="font-size:10px; color:#6b7280;" class="mono">${det.lat.toFixed(5)}, ${det.lon.toFixed(5)}</span><br>
                             <a href="javascript:void(0)" onclick="window.open(gmapsNav(${det.lat},${det.lon}),'_blank')"
                                style="display:inline-block; margin-top:4px; padding:3px 8px; background:#047857; color:#fff; border-radius:4px; text-decoration:none; font-size:10px; font-weight:600; cursor:pointer;">
-                               🧭 Get Directions
+                                Get Directions
                             </a>
                         </div>
                     `);
@@ -1492,7 +1492,7 @@
             document.getElementById('visible-markers-count').textContent = visibleCount;
         }
 
-        // ── TAB 2: Audit data loader (throttled to max 1 call per 3s unless forced) ───
+        //  TAB 2: Audit data loader (throttled to max 1 call per 3s unless forced) 
         let _auditLastCall = 0;
         function loadAuditData(force = false) {
             const now = Date.now();
@@ -1553,7 +1553,7 @@
                             </td>
                             <td style="text-align:center; display:flex; gap:4px; justify-content:center;">
                                 <button class="btn" style="font-size:10px; padding:4px 10px;">View</button>
-                                <a href="${navLink}" target="_blank" class="btn-nav" style="background:#047857; border-color:#059669;">🧭 Directions</a>
+                                <a href="${navLink}" target="_blank" class="btn-nav" style="background:#047857; border-color:#059669;"> Directions</a>
                             </td>
                         `;
                         tbody.appendChild(tr);
@@ -1584,7 +1584,7 @@
             const navContainer = document.getElementById('ev-nav-link');
             if (navContainer) {
                 const navLink = gmapsNav(inc.centroid_latitude, inc.centroid_longitude);
-                navContainer.innerHTML = `<a href="${navLink}" target="_blank" class="btn" style="width:100%; justify-content:center; padding:8px; text-decoration:none; background:#047857; border-color:#059669; color:#fff;">🧭 Get Driving Directions</a>`;
+                navContainer.innerHTML = `<a href="${navLink}" target="_blank" class="btn" style="width:100%; justify-content:center; padding:8px; text-decoration:none; background:#047857; border-color:#059669; color:#fff;"> Get Driving Directions</a>`;
             }
 
             const imgContainer = document.getElementById('ev-image-container');
@@ -1659,7 +1659,7 @@
             document.body.removeChild(link);
         });
 
-                    // ── FLIGHT COMMAND SYSTEM HANDLERS (MAP INTERACTION & UPDATE) ──
+                    //  FLIGHT COMMAND SYSTEM HANDLERS (MAP INTERACTION & UPDATE) 
         (function setupFlightConfigHandlers() {
             const btnSave = document.getElementById('btn-save-flight-cfg');
             const modelSelect = document.getElementById('model-select');
@@ -1691,11 +1691,11 @@
                     startGeofenceMarker = L.marker(latlng, {
                         draggable: true,
                         icon: L.divIcon({
-                            html: '🎯',
+                            html: '',
                             className: 'target-start-emoji',
                             iconSize: [24, 24]
                         })
-                    }).addTo(map).bindPopup("<b>🎯 Dynamic Geofence Center</b><br>Drag me to refine location!");
+                    }).addTo(map).bindPopup("<b> Dynamic Geofence Center</b><br>Drag me to refine location!");
 
                     // Draw the green geofenced active boundary circle
                     startGeofenceCircle = L.circle(latlng, {
@@ -1776,11 +1776,11 @@
                 })
                 .then(r => r.json())
                 .then(res => {
-                    alert(`🛰️ Flight Configuration Updated!\nActive Model: ${res.config.active_model}\nGeofenced Start Coordinates: ${res.config.start_lat}, ${res.config.start_lng}`);
+                    alert(` Flight Configuration Updated!\nActive Model: ${res.config.active_model}\nGeofenced Start Coordinates: ${res.config.start_lat}, ${res.config.start_lng}`);
                 })
                 .catch(err => {
                     console.error('Failed to sync flight configuration:', err);
-                    alert('❌ Failed to update flight parameters.');
+                    alert(' Failed to update flight parameters.');
                 });
             });
         })();
@@ -1871,7 +1871,7 @@
                         recordTimer = setInterval(updateRecordTimer, 1000);
                     })
                     .catch(err => {
-                        alert('❌ Error: ' + err.message);
+                        alert(' Error: ' + err.message);
                     });
             });
         }
@@ -1911,7 +1911,7 @@
                         }
                     })
                     .catch(err => {
-                        alert('❌ Error: ' + err.message);
+                        alert(' Error: ' + err.message);
                     });
             });
         }

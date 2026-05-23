@@ -79,13 +79,13 @@ app = FastAPI(
     description="Real-time Edge-Cloud Pipeline with Dual Dashboard feeds and spatial queries"
 )
 
-# ── Video source config ───────────────────────────────────────────────────────
+#  Video source config 
 # Controls what feeds the two dashboard video windows.
 # cv2.VideoCapture() accepts BOTH an integer (webcam) and a string URL (RTSP),
 # so switching from webcam to drone requires only changing this env var.
 #
-# WEBCAM  (default, testing):   VIDEO_SOURCE=0       ← built-in Mac/Windows webcam
-#                                VIDEO_SOURCE=1       ← second/external webcam
+# WEBCAM  (default, testing):   VIDEO_SOURCE=0        built-in Mac/Windows webcam
+#                                VIDEO_SOURCE=1        second/external webcam
 #
 # DRONE   (when hardware arrives):
 #   DJI via phone relay (DJI MSDK v5 RTSP relay app on Android):
@@ -100,7 +100,7 @@ app = FastAPI(
 #   python main.py server
 #
 _raw_source  = os.getenv("VIDEO_SOURCE", "0")
-# Auto-detect: if the value is a plain integer string → webcam index, else RTSP URL
+# Auto-detect: if the value is a plain integer string  webcam index, else RTSP URL
 VIDEO_SOURCE: int | str = int(_raw_source) if _raw_source.lstrip("-").isdigit() else _raw_source
 
 CAMERA_FPS     = float(os.getenv("CAMERA_FPS",     "15.0"))
@@ -117,47 +117,47 @@ def _video_capture_loop():
     pushes JPEG frames into latest_raw_frame / latest_overlay_frame.
 
     Source is controlled by the VIDEO_SOURCE env var:
-      • Integer  → local webcam (testing mode)
-      • URL str  → RTSP stream from drone or IP camera (field deployment)
+       Integer   local webcam (testing mode)
+       URL str   RTSP stream from drone or IP camera (field deployment)
 
-    No restart needed — just change VIDEO_SOURCE and reboot the server.
+    No restart needed  just change VIDEO_SOURCE and reboot the server.
     """
     global latest_raw_frame, latest_overlay_frame, latest_webcam_detections
 
     try:
         import cv2
     except ImportError:
-        logger.warning("opencv-python not installed — video feed disabled.")
+        logger.warning("opencv-python not installed  video feed disabled.")
         return
 
     is_rtsp = isinstance(VIDEO_SOURCE, str)
 
     if is_rtsp:
-        # ── DRONE / RTSP MODE ──────────────────────────────────────────────
+        #  DRONE / RTSP MODE 
         # Force TCP transport for stable Wi-Fi streaming (avoids UDP packet loss).
         # GStreamer pipeline string can be swapped here for Jetson hardware decode.
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"rtsp_transport;{RTSP_TRANSPORT}"
-        logger.info(f"🛸  Drone RTSP stream opening: {VIDEO_SOURCE}  (transport={RTSP_TRANSPORT})")
+        logger.info(f"  Drone RTSP stream opening: {VIDEO_SOURCE}  (transport={RTSP_TRANSPORT})")
         logger.info("    Waiting for drone to broadcast... (this may take a few seconds)")
         cap = cv2.VideoCapture(VIDEO_SOURCE, cv2.CAP_FFMPEG)
     else:
-        # ── WEBCAM MODE (default, no drone yet) ───────────────────────────
-        logger.info(f"📷  Webcam capture starting on camera index {VIDEO_SOURCE}...")
+        #  WEBCAM MODE (default, no drone yet) 
+        logger.info(f"  Webcam capture starting on camera index {VIDEO_SOURCE}...")
         cap = cv2.VideoCapture(VIDEO_SOURCE)
-        # Request a reasonable resolution — driver will use nearest supported
+        # Request a reasonable resolution  driver will use nearest supported
         cap.set(cv2.CAP_PROP_FRAME_WIDTH,  1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
     if not cap.isOpened():
         if is_rtsp:
             logger.warning(
-                f"⚠️  Could not connect to RTSP stream: {VIDEO_SOURCE}\n"
+                f"  Could not connect to RTSP stream: {VIDEO_SOURCE}\n"
                 "    Check that the drone is powered on, broadcasting, and on the same network.\n"
-                "    Falling back to no feed — dashboard will show placeholder."
+                "    Falling back to no feed  dashboard will show placeholder."
             )
         else:
             logger.warning(
-                f"⚠️  Could not open camera {VIDEO_SOURCE}. "
+                f"  Could not open camera {VIDEO_SOURCE}. "
                 "Try a different index via VIDEO_SOURCE env var."
             )
         return
@@ -168,7 +168,7 @@ def _video_capture_loop():
     global_video_w = w if w > 0 else 1280
     global_video_h = h if h > 0 else 720
     source_label = f"RTSP drone stream" if is_rtsp else f"webcam {VIDEO_SOURCE}"
-    logger.info(f"✅  {source_label} opened at {w}x{h} — feeding both dashboard streams.")
+    logger.info(f"  {source_label} opened at {w}x{h}  feeding both dashboard streams.")
 
     encode_params = [cv2.IMWRITE_JPEG_QUALITY, CAMERA_QUALITY]
     interval = 1.0 / CAMERA_FPS
@@ -193,21 +193,21 @@ def _video_capture_loop():
             target_path = str(weights_dir / target_model_name)
 
         if current_loaded_model_path != target_path:
-            logger.info(f"🔄 Swapping local server YOLO model: {current_loaded_model_path} -> {target_path}")
+            logger.info(f" Swapping local server YOLO model: {current_loaded_model_path} -> {target_path}")
             try:
                 from ultralytics import YOLO
                 global _yolo_model
                 _yolo_model = YOLO(target_path)
                 current_loaded_model_path = target_path
-                logger.info(f"✅ Local server YOLO model successfully swapped to: {target_model_name}")
+                logger.info(f" Local server YOLO model successfully swapped to: {target_model_name}")
             except Exception as e:
-                logger.error(f"❌ Failed to dynamic swap local YOLO model: {e}")
+                logger.error(f" Failed to dynamic swap local YOLO model: {e}")
         ret, frame = cap.read()
 
         if not ret:
             if is_rtsp:
-                # RTSP can drop temporarily (drone banking, interference) — keep retrying
-                logger.warning("⚠️  RTSP frame drop — retrying...")
+                # RTSP can drop temporarily (drone banking, interference)  keep retrying
+                logger.warning("  RTSP frame drop  retrying...")
                 time.sleep(0.1)
             else:
                 time.sleep(0.05)
@@ -252,7 +252,7 @@ def _video_capture_loop():
             distance_meters = 6371000.0 * c
             if distance_meters <= radius:
                 if not has_reached_starting_spot:
-                    logger.info("🎯 Drone has entered the Detection Starting Spot! AI Detection System is now ACTIVE.")
+                    logger.info(" Drone has entered the Detection Starting Spot! AI Detection System is now ACTIVE.")
                     has_reached_starting_spot = True
 
             return has_reached_starting_spot
@@ -267,17 +267,17 @@ def _video_capture_loop():
                 return False
             return global_cluster_engine.is_in_illegal_zone(drone_lat, drone_lon)
 
-        # ── DETECTION HOOK ────────────────────────────────────────────────
+        #  DETECTION HOOK 
         # Person-only detection (COCO class 0).
         # Replace _yolo_model with your custom model by dropping best.pt
-        # into models/weights/ — it auto-loads at startup.
+        # into models/weights/  it auto-loads at startup.
         if _yolo_model is not None and is_at_starting_spot() and is_inside_fence():
             try:
                 results = _yolo_model(
                     frame,
                     verbose=False,
                     classes=[0],    # 0 = person in COCO; swap for your custom class IDs later
-                    conf=0.30,      # confidence threshold — lower = catches more detections
+                    conf=0.30,      # confidence threshold  lower = catches more detections
                     iou=0.45,
                 )
                 overlay = results[0].plot()   # annotated BGR numpy array
@@ -304,7 +304,7 @@ def _video_capture_loop():
                 latest_overlay_frame = jpeg   # fallback: show raw if inference crashes
                 latest_webcam_detections = []
         else:
-            latest_overlay_frame = jpeg   # no model loaded — mirror raw feed
+            latest_overlay_frame = jpeg   # no model loaded  mirror raw feed
             latest_webcam_detections = []
 
         # Determine the final frame to write to the recording
@@ -333,7 +333,7 @@ def _video_capture_loop():
 # Mount the project's data directory so the frontend can directly load spatial GeoJSON files
 app.mount("/data", StaticFiles(directory=str(Path(__file__).resolve().parent.parent.parent / "data")), name="data")
 
-# Evidence directory — also served as static for UI image display
+# Evidence directory  also served as static for UI image display
 EVIDENCE_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "detections"
 EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -342,7 +342,7 @@ db_manager = DatabaseManager(db_type="sqlite")
 # Ensure DB is initialized
 db_manager.initialize_database()
 
-# Active buffer radius — starts at 1km, updated via /api/zone/radius
+# Active buffer radius  starts at 1km, updated via /api/zone/radius
 active_buffer_radius_m: float = 1000.0
 
 #  Global dictionary holding the active flight mission control configuration.
@@ -392,7 +392,7 @@ latest_raw_frame: bytes = b""
 latest_overlay_frame: bytes = b""
 latest_webcam_detections: List[Dict[str, Any]] = []
 
-# Holds the loaded YOLO model — set once at startup, used in _video_capture_loop
+# Holds the loaded YOLO model  set once at startup, used in _video_capture_loop
 _yolo_model = None
 
 # Global ClusterEngine for runtime buffer size synchronization
@@ -475,7 +475,7 @@ async def _webcam_telemetry_simulation_loop():
                 'heading':    heading_deg,
             })
 
-    logger.info(f"🚀 Hybrid simulation generated {len(flight_points)} waypoints (dynamic-radius weave).")
+    logger.info(f" Hybrid simulation generated {len(flight_points)} waypoints (dynamic-radius weave).")
     
     step = 0
     battery = 100.0
@@ -499,7 +499,7 @@ async def _webcam_telemetry_simulation_loop():
 
             # Dynamically compute lat/lon using the LIVE buffer radius so the
             # drone's weave amplitude instantly matches the slider value.
-            # Weave amplitude = 1.8 × buffer radius (flies well inside AND outside)
+            # Weave amplitude = 1.8  buffer radius (flies well inside AND outside)
             lateral_offset_meters = math.sin(point['weave_phase']) * (active_buffer_radius_m * 1.8)
             base_lat = point['base_lat']
             base_lon = point['base_lon']
@@ -553,7 +553,7 @@ async def _webcam_telemetry_simulation_loop():
             }
             await manager.broadcast(telemetry_payload)
             
-            # ── Process active webcam detections mapped to this GPS location! ──
+            #  Process active webcam detections mapped to this GPS location! 
             active_dets = list(latest_webcam_detections)
 
             if active_dets:
@@ -644,36 +644,36 @@ async def startup_event():
     """
     global _yolo_model
 
-    # ── Load YOLO model ───────────────────────────────────────────────────────
-    # Priority: custom trained weights → generic YOLOv8n placeholder
+    #  Load YOLO model 
+    # Priority: custom trained weights  generic YOLOv8n placeholder
     custom_weights = Path(__file__).resolve().parent.parent.parent / "models" / "weights" / "best.pt"
     try:
         from ultralytics import YOLO
 
         if custom_weights.exists():
             _yolo_model = YOLO(str(custom_weights))
-            logger.info(f"✅  Loaded CUSTOM YOLO model: {custom_weights.name}")
+            logger.info(f"  Loaded CUSTOM YOLO model: {custom_weights.name}")
         else:
             # Auto-downloads yolov8n.pt on first run (~6 MB) directly to models/weights/
             placeholder_path = custom_weights.parent / "yolov8n.pt"
             custom_weights.parent.mkdir(parents=True, exist_ok=True)
             _yolo_model = YOLO(str(placeholder_path))
-            logger.info(f"🤖  YOLOv8n placeholder loaded at {placeholder_path.name} — detecting PERSON ONLY (conf≥0.30). Swap best.pt when ready.")
+            logger.info(f"  YOLOv8n placeholder loaded at {placeholder_path.name}  detecting PERSON ONLY (conf0.30). Swap best.pt when ready.")
     except Exception as e:
-        logger.warning(f"⚠️  YOLO failed to load — overlay will mirror raw feed. Error: {e}")
+        logger.warning(f"  YOLO failed to load  overlay will mirror raw feed. Error: {e}")
         _yolo_model = None
 
-    # ── Start video capture thread AFTER model is ready ────────────────
+    #  Start video capture thread AFTER model is ready 
     # Ensures first frames already have a model to run against.
     t = threading.Thread(target=_video_capture_loop, daemon=True, name="video-capture")
     t.start()
     source_desc = f"RTSP: {VIDEO_SOURCE}" if isinstance(VIDEO_SOURCE, str) else f"webcam {VIDEO_SOURCE}"
-    logger.info(f"🎥  Video capture thread launched ({source_desc}) — dashboard feeds will populate shortly.")
+    logger.info(f"  Video capture thread launched ({source_desc})  dashboard feeds will populate shortly.")
 
     # Start the hybrid telemetry simulation loop if we are using the webcam (testing mode)
     if isinstance(VIDEO_SOURCE, int):
         asyncio.create_task(_webcam_telemetry_simulation_loop())
-        logger.info("🛰️ Launched dynamic hybrid flight telemetry simulator background task.")
+        logger.info(" Launched dynamic hybrid flight telemetry simulator background task.")
 
 # Frame generator for multipart MJPEG streaming
 async def frame_generator(stream_type: str):
@@ -1029,7 +1029,7 @@ def export_pdf_report(request: Request,
     )
 
 
-# ── FLIGHT CONTROL APIS (MID-FLIGHT SWITCHING & DYNAMIC GEOFENCING) ────────
+#  FLIGHT CONTROL APIS (MID-FLIGHT SWITCHING & DYNAMIC GEOFENCING) 
 @app.get("/api/flight/config")
 def get_flight_config(request: Request):
     """
@@ -1071,9 +1071,9 @@ async def update_flight_config(request: Request, data: Dict[str, Any]):
     # Reset starting spot trigger only if starting geofence coordinates/radius actually changed!
     if old_lat != new_lat or old_lng != new_lng or old_rad != new_rad:
         has_reached_starting_spot = False
-        logger.info("🎯 Geofence start coordinates updated — resetting starting spot trigger.")
+        logger.info(" Geofence start coordinates updated  resetting starting spot trigger.")
     
-    logger.info(f"🛰️ Updated Flight Configuration: {flight_config}")
+    logger.info(f" Updated Flight Configuration: {flight_config}")
     
     # Broadcast to all connected WebSocket dashboards so map and parameters update instantly!
     await manager.broadcast({
@@ -1083,7 +1083,7 @@ async def update_flight_config(request: Request, data: Dict[str, Any]):
     return {"status": "ok", "config": flight_config}
 
 
-# ── POSTGRES VPS DIRECT IMAGE RETRIEVAL API ──────────────────────────────────
+#  POSTGRES VPS DIRECT IMAGE RETRIEVAL API 
 @app.get("/api/evidence/db/{incident_id}")
 def get_evidence_image_from_db(request: Request, incident_id: int):
     """
@@ -1206,7 +1206,7 @@ async def set_zone_radius(request: Request, data: Dict[str, Any]):
         loop = asyncio.get_event_loop()
         success = await loop.run_in_executor(None, build_buffer, radius_m)
         if not success:
-            raise HTTPException(status_code=500, detail="Buffer rebuild failed — check centerline data")
+            raise HTTPException(status_code=500, detail="Buffer rebuild failed  check centerline data")
 
     active_buffer_radius_m = radius_m
     logger.info(f"Zone radius updated to {radius_m:.0f}m by operator")
@@ -1447,7 +1447,7 @@ async def start_recording(request: Request):
             
         recording_start_time = time.time()
         is_recording = True
-        logger.info(f"🔴 Admin Flight Recording Started: {recording_filepath} ({global_video_w}x{global_video_h})")
+        logger.info(f" Admin Flight Recording Started: {recording_filepath} ({global_video_w}x{global_video_h})")
         return {"status": "started", "filename": recording_filename}
 
 @app.post("/api/admin/record/stop")
@@ -1483,7 +1483,7 @@ async def stop_recording(request: Request):
         conn.commit()
         cursor.close()
         conn.close()
-        logger.info(f"⏹️ Admin Flight Recording Saved: {recording_filename} ({duration}s, {file_size} bytes)")
+        logger.info(f" Admin Flight Recording Saved: {recording_filename} ({duration}s, {file_size} bytes)")
         return {
             "status": "stopped",
             "filename": recording_filename,

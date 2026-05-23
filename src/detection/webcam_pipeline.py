@@ -1,8 +1,8 @@
 """
-webcam_pipeline.py — Webcam-based feed streamer (drone substitute for testing).
+webcam_pipeline.py  Webcam-based feed streamer (drone substitute for testing).
 Streams two MJPEG feeds to the FastAPI dashboard server:
-  • raw    → CAM 01: Raw Live Feed window
-  • overlay → CAM 01: YOLOv8 Annotated Feed window  (same frame for now;
+   raw     CAM 01: Raw Live Feed window
+   overlay  CAM 01: YOLOv8 Annotated Feed window  (same frame for now;
               plug your detection code into process_overlay_frame() later)
 
 Launched via:
@@ -27,7 +27,7 @@ class WebcamPipeline:
     Reads frames from a webcam and streams them to the FastAPI dashboard server
     as JPEG POSTs, feeding both the raw and overlay video windows.
 
-    Works on macOS and Windows — OpenCV's VideoCapture handles both.
+    Works on macOS and Windows  OpenCV's VideoCapture handles both.
     """
 
     RAW_ENDPOINT     = "/api/edge/frame?stream_type=raw"
@@ -54,7 +54,7 @@ class WebcamPipeline:
     # ------------------------------------------------------------------
     def process_overlay_frame(self, frame):
         """
-        Detection hook — currently returns the raw frame unchanged.
+        Detection hook  currently returns the raw frame unchanged.
         Replace the body of this method with your YOLO inference when ready.
         """
         return frame
@@ -67,7 +67,7 @@ class WebcamPipeline:
         cap = cv2.VideoCapture(self.camera_index)
         if not cap.isOpened():
             logger.error(
-                f"❌  Could not open camera {self.camera_index}. "
+                f"  Could not open camera {self.camera_index}. "
                 "Check --camera index or grant camera permissions."
             )
             sys.exit(1)
@@ -76,7 +76,7 @@ class WebcamPipeline:
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        logger.info(f"✅  Camera opened at {w}x{h}")
+        logger.info(f"  Camera opened at {w}x{h}")
         return cap
 
     def _encode(self, frame) -> bytes:
@@ -88,7 +88,7 @@ class WebcamPipeline:
 
     def _post(self, endpoint: str, jpeg_bytes: bytes):
         """
-        Best-effort POST — silently drops the frame if the server is
+        Best-effort POST  silently drops the frame if the server is
         unreachable (same resilient pattern as the edge pipeline).
         """
         try:
@@ -99,7 +99,7 @@ class WebcamPipeline:
                 timeout=0.3,
             )
         except requests.RequestException:
-            pass   # server offline / slow — skip frame, keep streaming
+            pass   # server offline / slow  skip frame, keep streaming
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -115,7 +115,7 @@ class WebcamPipeline:
         fps_timer      = time.time()
 
         logger.info(
-            f"🎥  Webcam pipeline active → {self.cloud_url} | "
+            f"  Webcam pipeline active  {self.cloud_url} | "
             f"FPS target: {self.target_fps} | JPEG quality: {self.jpeg_quality}"
         )
         logger.info("Press Ctrl+C to stop streaming.")
@@ -126,7 +126,7 @@ class WebcamPipeline:
 
                 ret, frame = cap.read()
                 if not ret:
-                    logger.warning("⚠️  Missed frame from camera — retrying...")
+                    logger.warning("  Missed frame from camera  retrying...")
                     time.sleep(0.05)
                     continue
 
@@ -144,7 +144,7 @@ class WebcamPipeline:
                 # Log actual FPS every 5 seconds
                 elapsed = time.time() - fps_timer
                 if elapsed >= 5.0:
-                    logger.info(f"📡  Streaming — actual FPS: {frame_count / elapsed:.1f}")
+                    logger.info(f"  Streaming  actual FPS: {frame_count / elapsed:.1f}")
                     frame_count = 0
                     fps_timer   = time.time()
 
@@ -154,7 +154,7 @@ class WebcamPipeline:
                     time.sleep(sleep_for)
 
         except KeyboardInterrupt:
-            logger.info("🛑  Webcam pipeline stopped by operator.")
+            logger.info("  Webcam pipeline stopped by operator.")
         finally:
             self.running = False
             cap.release()
