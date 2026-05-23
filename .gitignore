@@ -17,3 +17,6 @@ data/local_edge.db
 # Scratch Folders
 scratch/
 .gemini/
+
+# Sensitive env variables
+.env
