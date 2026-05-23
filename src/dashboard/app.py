@@ -182,12 +182,15 @@ def _video_capture_loop():
 
         # Dynamically hot-swap local YOLO model if operator changed it in the dropdown!
         target_model_name = flight_config.get("active_model", "yolov8n.pt")
+        weights_dir = Path(__file__).resolve().parent.parent.parent / "models" / "weights"
+        weights_dir.mkdir(parents=True, exist_ok=True)
+        
         if target_model_name == "best.pt":
-            target_path = str(Path(__file__).resolve().parent.parent.parent / "models" / "weights" / "best.pt")
+            target_path = str(weights_dir / "best.pt")
             if not Path(target_path).exists():
-                target_path = "yolov8n.pt"
+                target_path = str(weights_dir / "yolov8n.pt")
         else:
-            target_path = target_model_name
+            target_path = str(weights_dir / target_model_name)
 
         if current_loaded_model_path != target_path:
             logger.info(f"🔄 Swapping local server YOLO model: {current_loaded_model_path} -> {target_path}")
@@ -651,9 +654,11 @@ async def startup_event():
             _yolo_model = YOLO(str(custom_weights))
             logger.info(f"✅  Loaded CUSTOM YOLO model: {custom_weights.name}")
         else:
-            # Auto-downloads yolov8n.pt on first run (~6 MB) — already cached
-            _yolo_model = YOLO("yolov8n.pt")
-            logger.info("🤖  YOLOv8n placeholder loaded — detecting PERSON ONLY (conf≥0.30). Swap best.pt when ready.")
+            # Auto-downloads yolov8n.pt on first run (~6 MB) directly to models/weights/
+            placeholder_path = custom_weights.parent / "yolov8n.pt"
+            custom_weights.parent.mkdir(parents=True, exist_ok=True)
+            _yolo_model = YOLO(str(placeholder_path))
+            logger.info(f"🤖  YOLOv8n placeholder loaded at {placeholder_path.name} — detecting PERSON ONLY (conf≥0.30). Swap best.pt when ready.")
     except Exception as e:
         logger.warning(f"⚠️  YOLO failed to load — overlay will mirror raw feed. Error: {e}")
         _yolo_model = None
