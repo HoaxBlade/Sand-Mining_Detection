@@ -135,6 +135,7 @@ class DatabaseManager:
         CREATE TABLE IF NOT EXISTS users (
             id {serial_type},
             username VARCHAR(100) UNIQUE NOT NULL,
+            email VARCHAR(255),
             password_hash VARCHAR(255) NOT NULL,
             role VARCHAR(50) NOT NULL DEFAULT 'operator',
             created_at {t_timestamptz} NOT NULL DEFAULT {now_default}
@@ -169,6 +170,13 @@ class DatabaseManager:
                 logger.info("🔧 Migrating local SQLite: adding evidence_image_blob column to incidents table...")
                 cursor.execute("ALTER TABLE incidents ADD COLUMN evidence_image_blob BLOB;")
                 conn.commit()
+
+            cursor.execute("PRAGMA table_info(users);")
+            u_columns = [col[1] for col in cursor.fetchall()]
+            if "email" not in u_columns:
+                logger.info("🔧 Migrating local SQLite: adding email column to users table...")
+                cursor.execute("ALTER TABLE users ADD COLUMN email VARCHAR(255);")
+                conn.commit()
         else:
             try:
                 cursor.execute("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS evidence_image_blob BYTEA;")
@@ -176,6 +184,13 @@ class DatabaseManager:
             except Exception as e:
                 conn.rollback()
                 logger.debug(f"Postgres migration check: {e}")
+
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255);")
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                logger.debug(f"Postgres migration check for users email: {e}")
 
         # Seed default admin user if users table is empty
         cursor.execute("SELECT COUNT(*) FROM users;")

@@ -1288,6 +1288,91 @@ async def login(request: Request, response: Response, payload: Dict[str, str]):
     
     return {"status": "success", "username": username, "role": role}
 
+ALLOWED_EMAIL_DOMAINS = [".gov", ".gov.in", ".edu", ".edu.in", ".ac.in", ".org", "gmail.com"]
+
+@app.post("/api/auth/register")
+async def register(request: Request, response: Response, payload: Dict[str, str]):
+    username = payload.get("username", "").strip()
+    email = payload.get("email", "").strip().lower()
+    password = payload.get("password", "")
+    
+    if not username or not email or not password:
+        raise HTTPException(status_code=400, detail="Missing required registration fields")
+        
+    # Domain whitelist check
+    is_valid_domain = False
+    for domain in ALLOWED_EMAIL_DOMAINS:
+        if email.endswith(domain):
+            is_valid_domain = True
+            break
+            
+    if not is_valid_domain:
+        raise HTTPException(
+            status_code=400,
+            detail="This is not an authorized email address. Access is restricted to trusted domains (.gov, .edu, .org, gmail.com)."
+        )
+        
+    conn = db_manager.get_connection()
+    cursor = conn.cursor()
+    is_pg = db_manager.db_type == "postgresql"
+    
+    # Check if username or email already exists
+    query = "SELECT id FROM users WHERE username = %s OR email = %s;" if is_pg else "SELECT id FROM users WHERE username = ? OR email = ?;"
+    try:
+        cursor.execute(query, (username, email))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Username or email is already registered")
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        logger.error(f"Error checking user registration: {e}")
+        raise HTTPException(status_code=500, detail="Database lookup error")
+    finally:
+        cursor.close()
+        conn.close()
+        
+    # Hash password
+    salt = uuid.uuid4().hex
+    hashed = hashlib.sha256((salt + password).encode('utf-8')).hexdigest()
+    password_hash = f"{salt}:{hashed}"
+    
+    conn = db_manager.get_connection()
+    cursor = conn.cursor()
+    
+    insert_query = (
+        "INSERT INTO users (username, email, password_hash, role) VALUES (%s, %s, %s, %s);"
+        if is_pg else
+        "INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?);"
+    )
+    
+    try:
+        cursor.execute(insert_query, (username, email, password_hash, "operator"))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error inserting registered user: {e}")
+        raise HTTPException(status_code=500, detail="Registration save failure")
+    finally:
+        cursor.close()
+        conn.close()
+        
+    # Create active session
+    session_id = uuid.uuid4().hex
+    ACTIVE_SESSIONS[session_id] = {
+        "username": username,
+        "role": "operator"
+    }
+    
+    response.set_cookie(
+        key="session_id",
+        value=session_id,
+        httponly=True,
+        max_age=3600 * 24, # 24 hours
+        samesite="lax",
+        secure=False
+    )
+    
+    return {"status": "success", "username": username, "role": "operator"}
+
 @app.post("/api/auth/logout")
 async def logout(request: Request, response: Response):
     session_id = request.cookies.get("session_id")
