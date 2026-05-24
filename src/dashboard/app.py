@@ -502,6 +502,7 @@ latest_webcam_detections = []
 
 # Holds the loaded YOLO model  set once at startup, used in _video_capture_loop
 _yolo_model = None
+yolo_lock = None
 
 # Global ClusterEngine for runtime buffer size synchronization
 global_cluster_engine = None
@@ -842,8 +843,6 @@ async def receive_edge_frame(stream_type: str, request: Request):
         latest_raw_frame = frame_data
         
         # Run YOLO on the VPS when receiving webcam frames from the local laptop client!
-        # Run in executor so YOLO (slow CPU inference) does NOT block the async event loop
-        # which would freeze the overlay stream.
         try:
             import cv2
             import numpy as np
@@ -853,44 +852,69 @@ async def receive_edge_frame(stream_type: str, request: Request):
                 # Determine overlays and run YOLO on VPS
                 active_dets = []
                 overlay = frame.copy()
+                
+                global yolo_lock
+                if yolo_lock is None:
+                    yolo_lock = asyncio.Lock()
+
                 if _yolo_model is not None:
-                    # Detect person (0), car (2), motorcycle (3), bus (5), truck (7)
-                    # Run YOLO in thread pool so the async loop stays unblocked
-                    loop = asyncio.get_event_loop()
-                    results = await loop.run_in_executor(
-                        None,
-                        lambda: _yolo_model(
-                            frame,
-                            verbose=False,
-                            classes=[0, 2, 3, 5, 7],
-                            conf=0.30,
-                            iou=0.45,
-                        )
-                    )
-                    overlay = results[0].plot()
-                    
-                    # Extract detections
-                    if len(results[0].boxes) > 0:
-                        for box in results[0].boxes:
-                            coords = box.xyxy[0].tolist()
-                            conf = float(box.conf[0].item())
-                            cls_id = int(box.cls[0].item())
+                    # If YOLO is not currently busy, run inference on the frame!
+                    if not yolo_lock.locked():
+                        async with yolo_lock:
+                            loop = asyncio.get_event_loop()
+                            results = await loop.run_in_executor(
+                                None,
+                                lambda: _yolo_model(
+                                    frame,
+                                    verbose=False,
+                                    classes=[0, 2, 3, 5, 7],
+                                    conf=0.30,
+                                    iou=0.45,
+                                )
+                            )
+                            overlay = results[0].plot()
                             
-                            cls_map = {0: 'person', 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
-                            class_name = cls_map.get(cls_id, 'jcb')
+                            # Extract detections
+                            if len(results[0].boxes) > 0:
+                                for box in results[0].boxes:
+                                    coords = box.xyxy[0].tolist()
+                                    conf = float(box.conf[0].item())
+                                    cls_id = int(box.cls[0].item())
+                                    
+                                    cls_map = {0: 'person', 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
+                                    class_name = cls_map.get(cls_id, 'jcb')
+                                    
+                                    active_dets.append({
+                                        'class_name': class_name,
+                                        'confidence': conf,
+                                        'bbox_x_min': int(coords[0]),
+                                        'bbox_y_min': int(coords[1]),
+                                        'bbox_x_max': int(coords[2]),
+                                        'bbox_y_max': int(coords[3])
+                                    })
                             
-                            active_dets.append({
-                                'class_name': class_name,
-                                'confidence': conf,
-                                'bbox_x_min': int(coords[0]),
-                                'bbox_y_min': int(coords[1]),
-                                'bbox_x_max': int(coords[2]),
-                                'bbox_y_max': int(coords[3])
-                            })
-                if is_at_starting_spot() and is_inside_fence():
-                    latest_webcam_detections = active_dets
-                else:
-                    latest_webcam_detections = []
+                            if is_at_starting_spot() and is_inside_fence():
+                                latest_webcam_detections = active_dets
+                            else:
+                                latest_webcam_detections = []
+                    else:
+                        # YOLO is busy processing the previous frame!
+                        # Copy the last known detections and manually draw them on the raw frame
+                        # to keep the video stream perfectly fluid (30 FPS) with absolutely zero lag!
+                        overlay = frame.copy()
+                        if is_at_starting_spot() and is_inside_fence():
+                            for det in latest_webcam_detections:
+                                x1 = det.get('bbox_x_min', 0)
+                                y1 = det.get('bbox_y_min', 0)
+                                x2 = det.get('bbox_x_max', 0)
+                                y2 = det.get('bbox_y_max', 0)
+                                name = det.get('class_name', 'target')
+                                conf = det.get('confidence', 0.0)
+                                
+                                # Draw bounding box and label
+                                cv2.rectangle(overlay, (x1, y1), (x2, y2), (225, 105, 65), 2) # Premium orange-red tactical box
+                                label = f"{name} {conf:.2f}"
+                                cv2.putText(overlay, label, (x1, y1 - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (225, 105, 65), 2)
                 
                 _, obuf = cv2.imencode(".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 75])
                 latest_overlay_frame = obuf.tobytes()
