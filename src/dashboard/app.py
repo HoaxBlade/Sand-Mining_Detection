@@ -199,50 +199,6 @@ def _video_capture_loop():
 
 
 
-    # Calculate distance to see if drone has reached the Detection Starting Spot
-    def is_at_starting_spot():
-        global has_reached_starting_spot
-
-        target_lat = flight_config.get("start_lat", 0.0)
-        target_lng = flight_config.get("start_lng", 0.0)
-        radius = flight_config.get("start_radius_meters", 500.0)
-        enabled = flight_config.get("detection_enabled", False)
-
-        if not enabled or target_lat == 0.0 or target_lng == 0.0:
-            return False
-
-        drone_lat = latest_drone_coords.get("lat", 0.0)
-        drone_lon = latest_drone_coords.get("lon", 0.0)
-        if drone_lat == 0.0 or drone_lon == 0.0:
-            return False
-
-        import math
-        lat1, lon1 = math.radians(drone_lat), math.radians(drone_lon)
-        lat2, lon2 = math.radians(target_lat), math.radians(target_lng)
-        
-        dlat = lat2 - lat1
-        dlon = lon2 - lon1
-        
-        a = math.sin(dlat / 2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2)**2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-        
-        distance_meters = 6371000.0 * c
-        if distance_meters <= radius:
-            if not has_reached_starting_spot:
-                logger.info(" Drone has entered the Detection Starting Spot! AI Detection System is now ACTIVE.")
-                has_reached_starting_spot = True
-
-        return has_reached_starting_spot
-
-    def is_inside_fence():
-        global global_cluster_engine
-        if global_cluster_engine is None:
-            return True  # Fallback if engine is initializing
-        drone_lat = latest_drone_coords.get("lat", 0.0)
-        drone_lon = latest_drone_coords.get("lon", 0.0)
-        if drone_lat == 0.0 or drone_lon == 0.0:
-            return False
-        return global_cluster_engine.is_in_illegal_zone(drone_lat, drone_lon)
 
     while True:
         t0 = time.time()
@@ -466,6 +422,52 @@ flight_config = {
 latest_drone_coords = {"lat": 0.0, "lon": 0.0}
 has_reached_starting_spot = False
 
+# Calculate distance to see if drone has reached the Detection Starting Spot
+def is_at_starting_spot():
+    global has_reached_starting_spot
+
+    target_lat = flight_config.get("start_lat", 0.0)
+    target_lng = flight_config.get("start_lng", 0.0)
+    radius = flight_config.get("start_radius_meters", 500.0)
+    enabled = flight_config.get("detection_enabled", False)
+
+    if not enabled or target_lat == 0.0 or target_lng == 0.0:
+        return False
+
+    drone_lat = latest_drone_coords.get("lat", 0.0)
+    drone_lon = latest_drone_coords.get("lon", 0.0)
+    if drone_lat == 0.0 or drone_lon == 0.0:
+        return False
+
+    import math
+    lat1, lon1 = math.radians(drone_lat), math.radians(drone_lon)
+    lat2, lon2 = math.radians(target_lat), math.radians(target_lng)
+    
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    
+    a = math.sin(dlat / 2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    
+    distance_meters = 6371000.0 * c
+    if distance_meters <= radius:
+        if not has_reached_starting_spot:
+            logger.info(" Drone has entered the Detection Starting Spot! AI Detection System is now ACTIVE.")
+            has_reached_starting_spot = True
+
+    return has_reached_starting_spot
+
+def is_inside_fence():
+    global global_cluster_engine
+    if global_cluster_engine is None:
+        return True  # Fallback if engine is initializing
+    drone_lat = latest_drone_coords.get("lat", 0.0)
+    drone_lon = latest_drone_coords.get("lon", 0.0)
+    if drone_lat == 0.0 or drone_lon == 0.0:
+        return False
+    return global_cluster_engine.is_in_illegal_zone(drone_lat, drone_lon)
+
+
 # Store active websocket connections
 class ConnectionManager:
     def __init__(self):
@@ -605,7 +607,7 @@ async def _webcam_telemetry_simulation_loop():
 
             # Dynamically compute lat/lon using the LIVE buffer radius so the
             # drone's weave amplitude instantly matches the slider value.
-            # Weave amplitude = 1.8  buffer radius (flies well inside AND outside)
+            # Weave amplitude = 1.8 * buffer radius (flies well inside AND outside)
             lateral_offset_meters = math.sin(point['weave_phase']) * (active_buffer_radius_m * 1.8)
             base_lat = point['base_lat']
             base_lon = point['base_lon']
@@ -878,7 +880,10 @@ async def receive_edge_frame(stream_type: str, request: Request):
                                 'bbox_x_max': int(coords[2]),
                                 'bbox_y_max': int(coords[3])
                             })
-                latest_webcam_detections = active_dets
+                if is_at_starting_spot() and is_inside_fence():
+                    latest_webcam_detections = active_dets
+                else:
+                    latest_webcam_detections = []
                 
                 _, obuf = cv2.imencode(".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 75])
                 latest_overlay_frame = obuf.tobytes()
@@ -889,7 +894,10 @@ async def receive_edge_frame(stream_type: str, request: Request):
                         if recording_writer is not None:
                             try:
                                 # Determine the final frame to write to the recording
-                                recording_frame = overlay
+                                if is_at_starting_spot() and is_inside_fence():
+                                    recording_frame = overlay
+                                else:
+                                    recording_frame = frame
                                 recording_writer.write(recording_frame)
                             except Exception as e:
                                 logger.error("Error writing frame to recording: {}".format(e))
