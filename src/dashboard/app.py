@@ -75,6 +75,7 @@ recording_lock = threading.Lock()
 global_video_w = 1280
 global_video_h = 720
 local_webcam_mode = False
+last_webcam_frame_time = 0.0
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -129,7 +130,7 @@ def _video_capture_loop():
 
     No restart needed just change VIDEO_SOURCE and reboot the server.
     """
-    global latest_raw_frame, latest_overlay_frame, latest_webcam_detections, _yolo_model
+    global latest_raw_frame, latest_overlay_frame, latest_webcam_detections, _yolo_model, local_webcam_mode, last_webcam_frame_time
 
     try:
         import cv2
@@ -245,6 +246,16 @@ def _video_capture_loop():
 
     while True:
         t0 = time.time()
+
+        if local_webcam_mode:
+            # If the user is actively streaming their browser webcam, pause drone file playback!
+            # If no frame has been uploaded for more than 3 seconds, reset mode back to false!
+            if time.time() - last_webcam_frame_time > 3.0:
+                local_webcam_mode = False
+                logger.info(" Browser webcam stream timed out. Restoring default drone video playback.")
+            else:
+                time.sleep(0.06)
+                continue
 
         # Dynamically hot-swap local YOLO model if operator changed it in the dropdown!
         target_model_name = flight_config.get("active_model", "yolov8n.pt")
@@ -411,7 +422,7 @@ def _video_capture_loop():
                 pass
 
         # Write to video recorder if active
-        global is_recording, recording_writer, recording_lock, local_webcam_mode
+        global is_recording, recording_writer, recording_lock
         if is_recording and not local_webcam_mode:
             with recording_lock:
                 if recording_writer is not None:
@@ -816,13 +827,14 @@ async def stream_overlay(request: Request):
 @app.post("/api/edge/frame")
 async def receive_edge_frame(stream_type: str, request: Request):
     """Receives compressed JPEG frames uploaded by the Edge Jetson Nano or local Webcam pipeline."""
-    global latest_raw_frame, latest_overlay_frame, latest_webcam_detections, is_recording, recording_writer, recording_lock, local_webcam_mode
+    global latest_raw_frame, latest_overlay_frame, latest_webcam_detections, is_recording, recording_writer, recording_lock, local_webcam_mode, last_webcam_frame_time
     frame_data = await request.body()
     if not frame_data:
         return {"status": "ok"}
 
     # Browser is streaming frames to us! Activate local webcam mode so recording / detection pipelines fall back to this stream
     local_webcam_mode = True
+    last_webcam_frame_time = time.time()
 
     if stream_type == "raw":
         latest_raw_frame = frame_data
