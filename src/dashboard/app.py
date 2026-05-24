@@ -893,11 +893,16 @@ async def receive_edge_frame(stream_type: str, request: Request):
                     with recording_lock:
                         if recording_writer is not None:
                             try:
-                                # Determine the final frame to write to the recording
+                                # Pick annotated overlay if inside geofence, else raw frame
                                 if is_at_starting_spot() and is_inside_fence():
                                     recording_frame = overlay
                                 else:
                                     recording_frame = frame
+                                # ALWAYS resize to match the VideoWriter's initialized dimensions
+                                rw, rh = global_video_w, global_video_h
+                                fh, fw = recording_frame.shape[:2]
+                                if fw != rw or fh != rh:
+                                    recording_frame = cv2.resize(recording_frame, (rw, rh))
                                 recording_writer.write(recording_frame)
                             except Exception as e:
                                 logger.error("Error writing frame to recording: {}".format(e))
