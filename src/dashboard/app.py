@@ -122,6 +122,20 @@ RTSP_TRANSPORT = os.getenv("RTSP_TRANSPORT", "tcp")   # "tcp" | "udp"
 latest_bgr_frame = None
 frame_lock = threading.Lock()
 
+main_loop = None
+raw_frame_event = None
+overlay_frame_event = None
+
+def notify_raw_frame():
+    global main_loop, raw_frame_event
+    if main_loop and raw_frame_event:
+        main_loop.call_soon_threadsafe(raw_frame_event.set)
+
+def notify_overlay_frame():
+    global main_loop, overlay_frame_event
+    if main_loop and overlay_frame_event:
+        main_loop.call_soon_threadsafe(overlay_frame_event.set)
+
 def _video_capture_loop():
     """
     Background daemon thread: opens the configured video source and continuously
@@ -312,9 +326,11 @@ def _video_capture_loop():
 
         # Raw feed: clean, unprocessed frame from the camera
         latest_raw_frame = jpeg
+        notify_raw_frame()
 
         if use_synthetic_video:
             latest_overlay_frame = jpeg
+            notify_overlay_frame()
             latest_webcam_detections = []
 
         # Determine the final frame to write to the recording
@@ -366,12 +382,6 @@ def _yolo_inference_loop():
         # Sleep a tiny bit to avoid raw spinning when no frames are available
         time.sleep(0.01)
 
-        if local_webcam_mode:
-            # If browser webcam mode is active, the browser pushes frame updates directly
-            # through receive_edge_frame which runs its own YOLO, so we skip here.
-            time.sleep(0.1)
-            continue
-
         # Dynamically hot-swap local YOLO model if operator changed it in the dropdown!
         target_model_name = flight_config.get("active_model", "yolov8n.pt")
         weights_dir = Path(__file__).resolve().parent.parent.parent / "models" / "weights"
@@ -404,6 +414,7 @@ def _yolo_inference_loop():
         if frame is None:
             continue
 
+        overlay = None
         if _yolo_model is not None:
             try:
                 # Detect person (0), car (2), motorcycle (3), bus (5), truck (7)
@@ -417,6 +428,7 @@ def _yolo_inference_loop():
                 overlay = results[0].plot()   # annotated BGR numpy array
                 _, obuf = cv2.imencode(".jpg", overlay, encode_params)
                 latest_overlay_frame = obuf.tobytes()
+                notify_overlay_frame()
 
                 # Extract and store bounding box details globally for hybrid telemetry mapping
                 # But ONLY trigger incidents when inside geofence start area!
@@ -446,12 +458,36 @@ def _yolo_inference_loop():
                 # Fallback to raw frame on inference error
                 _, obuf = cv2.imencode(".jpg", frame, encode_params)
                 latest_overlay_frame = obuf.tobytes()
+                notify_overlay_frame()
                 latest_webcam_detections = []
+                overlay = frame
         else:
             # No model loaded, mirror raw frame
             _, obuf = cv2.imencode(".jpg", frame, encode_params)
             latest_overlay_frame = obuf.tobytes()
+            notify_overlay_frame()
             latest_webcam_detections = []
+            overlay = frame
+
+        # Write to video recorder if active and local_webcam_mode is True
+        global is_recording, recording_writer, recording_lock
+        if is_recording and local_webcam_mode:
+            with recording_lock:
+                if recording_writer is not None:
+                    try:
+                        # Pick annotated overlay if inside geofence, else raw frame
+                        if is_at_starting_spot() and overlay is not None:
+                            recording_frame = overlay
+                        else:
+                            recording_frame = frame
+                        # ALWAYS resize to match the VideoWriter's initialized dimensions
+                        rw, rh = global_video_w, global_video_h
+                        fh, fw = recording_frame.shape[:2]
+                        if fw != rw or fh != rh:
+                            recording_frame = cv2.resize(recording_frame, (rw, rh))
+                        recording_writer.write(recording_frame)
+                    except Exception as e:
+                        logger.error("Error writing frame to recording: {}".format(e))
 
 
 # Mount the project's data directory so the frontend can directly load spatial GeoJSON files
@@ -987,7 +1023,10 @@ async def startup_event():
     1. Loads the YOLO detection model (custom best.pt if available, else yolov8n.pt).
     2. Launches the video capture thread so both dashboard feed windows go live.
     """
-    global _yolo_model
+    global _yolo_model, main_loop, raw_frame_event, overlay_frame_event
+    main_loop = asyncio.get_running_loop()
+    raw_frame_event = asyncio.Event()
+    overlay_frame_event = asyncio.Event()
 
     #  Load YOLO model 
     # Priority: custom trained weights  generic YOLOv8n placeholder
@@ -1028,14 +1067,22 @@ async def startup_event():
 
 
 # Frame generator for multipart MJPEG streaming
-async def frame_generator(stream_type     ):
-    global latest_raw_frame, latest_overlay_frame
+async def frame_generator(stream_type: str):
+    global latest_raw_frame, latest_overlay_frame, raw_frame_event, overlay_frame_event
+    event = raw_frame_event if stream_type == "raw" else overlay_frame_event
     
     # 1. Fallback dummy frame if no feed is active
     # A simple 1x1 black pixel JPEG byte representation
     dummy_pixel = b'\xff\xd8\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.\' ",#\x1c\x1c(7),01444\x1f\'9=82<.342\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xda\x00\x08\x01\x01\x00\x00?\x00\xbf\x00\xff\xd9'
 
     while True:
+        if event:
+            try:
+                await asyncio.wait_for(event.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass
+            event.clear()
+
         frame = latest_raw_frame if stream_type == "raw" else latest_overlay_frame
         
         # If no frame has been sent yet, serve the dummy black pixel
@@ -1044,7 +1091,6 @@ async def frame_generator(stream_type     ):
             
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-        await asyncio.sleep(0.06)  # Stream at approx 15-20 FPS
 
 # Live Video Endpoints (multipart MJPEG)
 @app.get("/stream/raw")
@@ -1073,7 +1119,7 @@ async def stream_overlay(request: Request):
 @app.post("/api/edge/frame")
 async def receive_edge_frame(stream_type: str, request: Request):
     """Receives compressed JPEG frames uploaded by the Edge Jetson Nano or local Webcam pipeline."""
-    global latest_raw_frame, latest_overlay_frame, latest_webcam_detections, is_recording, recording_writer, recording_lock, local_webcam_mode, last_webcam_frame_time
+    global latest_raw_frame, latest_overlay_frame, latest_webcam_detections, local_webcam_mode, last_webcam_frame_time, latest_bgr_frame
     frame_data = await request.body()
     if not frame_data:
         return {"status": "ok"}
@@ -1096,103 +1142,17 @@ async def receive_edge_frame(stream_type: str, request: Request):
                 # Re-encode flipped frame to update the raw stream
                 _, raw_buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
                 latest_raw_frame = raw_buf.tobytes()
+                notify_raw_frame()
                 
-                # Determine overlays and run YOLO on VPS
-                active_dets = []
-                overlay = frame.copy()
-                
-                global yolo_lock
-                if yolo_lock is None:
-                    yolo_lock = asyncio.Lock()
-
-                if _yolo_model is not None:
-                    # If YOLO is not currently busy, run inference on the frame!
-                    if not yolo_lock.locked():
-                        async with yolo_lock:
-                            loop = asyncio.get_event_loop()
-                            results = await loop.run_in_executor(
-                                None,
-                                lambda: _yolo_model(
-                                    frame,
-                                    verbose=False,
-                                    classes=[0, 2, 3, 5, 7],
-                                    conf=0.30,
-                                    iou=0.45,
-                                )
-                            )
-                            overlay = results[0].plot()
-                            
-                            # Extract detections
-                            if len(results[0].boxes) > 0:
-                                for box in results[0].boxes:
-                                    coords = box.xyxy[0].tolist()
-                                    conf = float(box.conf[0].item())
-                                    cls_id = int(box.cls[0].item())
-                                    
-                                    cls_map = {0: 'person', 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
-                                    class_name = cls_map.get(cls_id, 'jcb')
-                                    
-                                    active_dets.append({
-                                        'class_name': class_name,
-                                        'confidence': conf,
-                                        'bbox_x_min': int(coords[0]),
-                                        'bbox_y_min': int(coords[1]),
-                                        'bbox_x_max': int(coords[2]),
-                                        'bbox_y_max': int(coords[3])
-                                    })
-                            
-                            if is_at_starting_spot():
-                                latest_webcam_detections = active_dets
-                            else:
-                                latest_webcam_detections = []
-                    else:
-                        # YOLO is busy processing the previous frame!
-                        # Copy the last known detections and manually draw them on the raw frame
-                        # to keep the video stream perfectly fluid (30 FPS) with absolutely zero lag!
-                        overlay = frame.copy()
-                        if is_at_starting_spot():
-                            for det in latest_webcam_detections:
-                                x1 = det.get('bbox_x_min', 0)
-                                y1 = det.get('bbox_y_min', 0)
-                                x2 = det.get('bbox_x_max', 0)
-                                y2 = det.get('bbox_y_max', 0)
-                                name = det.get('class_name', 'target')
-                                conf = det.get('confidence', 0.0)
-                                
-                                # Draw bounding box and label
-                                cv2.rectangle(overlay, (x1, y1), (x2, y2), (225, 105, 65), 2) # Premium orange-red tactical box
-                                label = f"{name} {conf:.2f}"
-                                cv2.putText(overlay, label, (x1, y1 - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (225, 105, 65), 2)
-                
-                _, obuf = cv2.imencode(".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 75])
-                latest_overlay_frame = obuf.tobytes()
- 
-                # If recording is active, write browser frames to output file directly on the VPS!
-                if is_recording:
-                    with recording_lock:
-                        if recording_writer is not None:
-                            try:
-                                # Pick annotated overlay if inside geofence, else raw frame
-                                if is_at_starting_spot():
-                                    recording_frame = overlay
-                                else:
-                                    recording_frame = frame
-                                # ALWAYS resize to match the VideoWriter's initialized dimensions
-                                rw, rh = global_video_w, global_video_h
-                                fh, fw = recording_frame.shape[:2]
-                                if fw != rw or fh != rh:
-                                    recording_frame = cv2.resize(recording_frame, (rw, rh))
-                                recording_writer.write(recording_frame)
-                            except Exception as e:
-                                logger.error("Error writing frame to recording: {}".format(e))
+                with frame_lock:
+                    latest_bgr_frame = frame.copy()
         except Exception as exc:
-            logger.debug("VPS received-frame YOLO error: {}".format(exc))
+            logger.debug("VPS received-frame decode error: {}".format(exc))
             
     elif stream_type == "overlay":
-        # Only overwrite overlay if we aren't generating it ourselves from the raw stream
-        # This keeps compatibility with the Edge pipeline which uploads its own overlay
-        if latest_overlay_frame is None or len(latest_webcam_detections) == 0:
-            latest_overlay_frame = frame_data
+        # Save received overlay JPEG bytes to latest_overlay_frame and trigger notify_overlay_frame()
+        latest_overlay_frame = frame_data
+        notify_overlay_frame()
             
     return {"status": "ok"}
 

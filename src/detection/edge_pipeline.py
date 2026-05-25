@@ -4,6 +4,7 @@ import json
 import time
 import math
 import random
+import queue
 import cv2
 import numpy as np
 import requests
@@ -65,7 +66,8 @@ class EdgePipeline:
         )
         
         self.running = False
-        self.frame_w, self.frame_h = 1920, 1080  # 1080p canvas for performance
+        self.frame_w, self.frame_h = 1280, 720  # Set resolution to 1280x720 to reduce overhead
+        self.upload_queue = queue.Queue(maxsize=10)
 
         # Offline-first sync worker  starts as daemon, retries with backoff
         self.sync_worker = SyncWorker(
@@ -89,6 +91,33 @@ class EdgePipeline:
         # Track if we have already generated our dynamic test path for takeoff simulation
         self.dynamic_path_generated = False
         self.current_flight_idx = 0
+
+    def queue_post(self, request_type, url, data=None, json_data=None):
+        if self.upload_queue.full():
+            try:
+                self.upload_queue.get_nowait()
+            except queue.Empty:
+                pass
+        self.upload_queue.put((request_type, url, data, json_data))
+
+    def uploader_worker(self):
+        session = requests.Session()
+        while self.running or not self.upload_queue.empty():
+            try:
+                item = self.upload_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            request_type, url, data, json_data = item
+            try:
+                if request_type == "post_raw":
+                    session.post(url, data=data, headers={"Content-Type": "image/jpeg"}, timeout=0.1)
+                elif request_type == "post_json":
+                    session.post(url, json=json_data, timeout=0.1)
+            except Exception:
+                pass
+            finally:
+                self.upload_queue.task_done()
+        session.close()
 
     def load_yolo_model(self, model_name):
         """Dynamically loads/swaps the active YOLO model weights mid-flight."""
@@ -290,6 +319,10 @@ class EdgePipeline:
 
         # Start the resilient offline-first background sync worker
         self.sync_worker.start()
+
+        # Start background uploader thread
+        self.uploader_thread = Thread(target=self.uploader_worker, daemon=True)
+        self.uploader_thread.start()
         
         conn = self.db_manager.get_connection()
         cursor = conn.cursor()
@@ -430,59 +463,52 @@ class EdgePipeline:
 
                 # 6. Cloud Streaming (best-effort  sync_worker handles reliable retry)
                 # Try to POST real-time frames & telemetry updates to FastAPI server
-                try:
-                    # Upload Raw Video Frame
-                    requests.post(
-                        f"{self.cloud_url}/api/edge/frame?stream_type=raw",
-                        data=raw_jpeg,
-                        headers={"Content-Type": "image/jpeg"},
-                        timeout=0.1
-                    )
-                    # Upload Overlay Video Frame
-                    requests.post(
-                        f"{self.cloud_url}/api/edge/frame?stream_type=overlay",
-                        data=overlay_jpeg,
-                        headers={"Content-Type": "image/jpeg"},
-                        timeout=0.1
-                    )
-                    
-                    # Send Telemetry log sync update via API
-                    requests.post(
+                # Upload Raw Video Frame
+                self.queue_post(
+                    "post_raw",
+                    f"{self.cloud_url}/api/edge/frame?stream_type=raw",
+                    data=raw_jpeg
+                )
+                # Upload Overlay Video Frame
+                self.queue_post(
+                    "post_raw",
+                    f"{self.cloud_url}/api/edge/frame?stream_type=overlay",
+                    data=overlay_jpeg
+                )
+                
+                # Send Telemetry log sync update via API
+                self.queue_post(
+                    "post_json",
+                    f"{self.cloud_url}/api/edge/sync",
+                    json_data={
+                        "type": "telemetry",
+                        "payload": {
+                            "timestamp": timestamp,
+                            "lat": lat,
+                            "lon": lon,
+                            "altitude": alt,
+                            "speed": speed,
+                            "battery": int(battery)
+                        }
+                    }
+                )
+
+                # Send detection warning sync alerts immediately if any cluster forms
+                for inc in incidents:
+                    self.queue_post(
+                        "post_json",
                         f"{self.cloud_url}/api/edge/sync",
-                        json={
-                            "type": "telemetry",
+                        json_data={
+                            "type": "detections",
                             "payload": {
-                                "timestamp": timestamp,
-                                "lat": lat,
-                                "lon": lon,
-                                "altitude": alt,
-                                "speed": speed,
-                                "battery": int(battery)
+                                "incident_id": step + 1000, # Mock synced index
+                                "severity": inc['severity'],
+                                "centroid_latitude": inc['centroid_lat'],
+                                "centroid_longitude": inc['centroid_lon'],
+                                "detections": inc['detections']
                             }
-                        },
-                        timeout=0.1
+                        }
                     )
-
-                    # Send detection warning sync alerts immediately if any cluster forms
-                    for inc in incidents:
-                        requests.post(
-                            f"{self.cloud_url}/api/edge/sync",
-                            json={
-                                "type": "detections",
-                                "payload": {
-                                    "incident_id": step + 1000, # Mock synced index
-                                    "severity": inc['severity'],
-                                    "centroid_latitude": inc['centroid_lat'],
-                                    "centroid_longitude": inc['centroid_lon'],
-                                    "detections": inc['detections']
-                                }
-                            },
-                            timeout=0.1
-                        )
-
-                except requests.RequestException:
-                    # Silent ignore if cloud server is offline - pipeline remains resiliently logging locally!
-                    pass
 
                 if step % 20 == 0:
                     logger.info(f"Jetson Nano Status - Frame: {step} | Battery: {int(battery)}% | Detections in frame: {len(raw_detections)}")

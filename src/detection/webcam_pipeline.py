@@ -13,6 +13,8 @@ Launched via:
 import logging
 import sys
 import time
+import queue
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -46,6 +48,25 @@ class WebcamPipeline:
         self.jpeg_quality  = jpeg_quality
         self.running       = False
         self._session = None
+        self.upload_queue  = queue.Queue(maxsize=2)
+
+    def queue_upload(self, endpoint, jpeg_bytes):
+        if self.upload_queue.full():
+            try:
+                self.upload_queue.get_nowait()
+            except queue.Empty:
+                pass
+        self.upload_queue.put((endpoint, jpeg_bytes))
+
+    def uploader_worker(self):
+        while self.running or not self.upload_queue.empty():
+            try:
+                item = self.upload_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            endpoint, jpeg_bytes = item
+            self._post(endpoint, jpeg_bytes)
+            self.upload_queue.task_done()
 
     # ------------------------------------------------------------------
     # Override this method when you add your detection code.
@@ -110,6 +131,10 @@ class WebcamPipeline:
         self._session = requests.Session()   # keep-alive across frames
         self.running = True
 
+        # Start uploader worker thread
+        uploader_thread = threading.Thread(target=self.uploader_worker, daemon=True)
+        uploader_thread.start()
+
         frame_interval = 1.0 / self.target_fps
         frame_count    = 0
         fps_timer      = time.time()
@@ -132,12 +157,12 @@ class WebcamPipeline:
 
                 # --- Raw feed: clean, unmodified webcam frame ---
                 raw_jpeg = self._encode(frame)
-                self._post(self.RAW_ENDPOINT, raw_jpeg)
+                self.queue_upload(self.RAW_ENDPOINT, raw_jpeg)
 
                 # --- Overlay feed: processed frame (detection hook above) ---
                 overlay_frame = self.process_overlay_frame(frame)
                 overlay_jpeg  = self._encode(overlay_frame)
-                self._post(self.OVERLAY_ENDPOINT, overlay_jpeg)
+                self.queue_upload(self.OVERLAY_ENDPOINT, overlay_jpeg)
 
                 frame_count += 1
 
