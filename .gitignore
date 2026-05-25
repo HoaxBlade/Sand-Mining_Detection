@@ -17,3 +17,5 @@ data/local_edge.db
 # Scratch Folders
 scratch/
 .gemini/
+ 
+*.MP4
