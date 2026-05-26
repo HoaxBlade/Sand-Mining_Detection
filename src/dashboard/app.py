@@ -112,7 +112,7 @@ _raw_source = os.getenv("VIDEO_SOURCE", "0")
 VIDEO_SOURCE = int(_raw_source) if _raw_source.lstrip("-").isdigit() else _raw_source
 
 CAMERA_FPS = float(os.getenv("CAMERA_FPS", "15.0"))
-CAMERA_QUALITY = int(os.getenv("CAMERA_QUALITY", "75"))
+CAMERA_QUALITY = int(os.getenv("CAMERA_QUALITY", "50"))
 
 # RTSP-specific tuning (only relevant when VIDEO_SOURCE is a URL)
 # Prefer TCP transport for reliability over Wi-Fi (default is UDP which can drop frames)
@@ -321,7 +321,14 @@ def _video_capture_loop():
         with frame_lock:
             latest_bgr_frame = frame.copy()
 
-        _, buf = cv2.imencode(".jpg", frame, encode_params)
+        # OPTIMIZATION: Downscale raw frame for low-latency web streaming to save bandwidth
+        h, w = frame.shape[:2]
+        if w > 854 or h > 480:
+            stream_frame = cv2.resize(frame, (854, 480))
+        else:
+            stream_frame = frame
+
+        _, buf = cv2.imencode(".jpg", stream_frame, encode_params)
         jpeg = buf.tobytes()
 
         # Raw feed: clean, unprocessed frame from the camera
@@ -418,15 +425,25 @@ def _yolo_inference_loop():
         if _yolo_model is not None:
             try:
                 # Detect person (0), car (2), motorcycle (3), bus (5), truck (7)
+                # OPTIMIZATION: Run YOLO at imgsz=1280 to capture tiny targets/humans from aerial heights!
                 results = _yolo_model(
                     frame,
                     verbose=False,
                     classes=[0, 2, 3, 5, 7],
                     conf=0.30,
                     iou=0.45,
+                    imgsz=1280
                 )
                 overlay = results[0].plot()   # annotated BGR numpy array
-                _, obuf = cv2.imencode(".jpg", overlay, encode_params)
+                
+                # Downscale the annotated overlay for web streaming to save bandwidth
+                h_ov, w_ov = overlay.shape[:2]
+                if w_ov > 854 or h_ov > 480:
+                    overlay_stream = cv2.resize(overlay, (854, 480))
+                else:
+                    overlay_stream = overlay
+                    
+                _, obuf = cv2.imencode(".jpg", overlay_stream, encode_params)
                 latest_overlay_frame = obuf.tobytes()
                 notify_overlay_frame()
 
@@ -456,14 +473,24 @@ def _yolo_inference_loop():
             except Exception as exc:
                 logger.debug("YOLO inference error: {}".format(exc))
                 # Fallback to raw frame on inference error
-                _, obuf = cv2.imencode(".jpg", frame, encode_params)
+                h_ov, w_ov = frame.shape[:2]
+                if w_ov > 854 or h_ov > 480:
+                    overlay_stream = cv2.resize(frame, (854, 480))
+                else:
+                    overlay_stream = frame
+                _, obuf = cv2.imencode(".jpg", overlay_stream, encode_params)
                 latest_overlay_frame = obuf.tobytes()
                 notify_overlay_frame()
                 latest_webcam_detections = []
                 overlay = frame
         else:
             # No model loaded, mirror raw frame
-            _, obuf = cv2.imencode(".jpg", frame, encode_params)
+            h_ov, w_ov = frame.shape[:2]
+            if w_ov > 854 or h_ov > 480:
+                overlay_stream = cv2.resize(frame, (854, 480))
+            else:
+                overlay_stream = frame
+            _, obuf = cv2.imencode(".jpg", overlay_stream, encode_params)
             latest_overlay_frame = obuf.tobytes()
             notify_overlay_frame()
             latest_webcam_detections = []
@@ -1139,8 +1166,15 @@ async def receive_edge_frame(stream_type: str, request: Request):
                 # Flip the frame horizontally to correct webcam mirroring
                 frame = cv2.flip(frame, 1)
                 
+                # OPTIMIZATION: Downscale raw frame for low-latency web streaming, but keep 'frame' high-resolution for YOLO
+                h, w = frame.shape[:2]
+                if w > 854 or h > 480:
+                    stream_frame = cv2.resize(frame, (854, 480))
+                else:
+                    stream_frame = frame
+                
                 # Re-encode flipped frame to update the raw stream
-                _, raw_buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                _, raw_buf = cv2.imencode(".jpg", stream_frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
                 latest_raw_frame = raw_buf.tobytes()
                 notify_raw_frame()
                 
