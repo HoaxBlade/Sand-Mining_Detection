@@ -1559,6 +1559,109 @@ def get_flight_config(request: Request):
     return flight_config
 
 
+# ============================================================
+# MODEL MANAGEMENT — Upload & List Custom YOLO Weights
+# ============================================================
+
+from fastapi import UploadFile, File, Form
+
+@app.post("/api/model/upload")
+async def upload_model(request: Request, file: UploadFile = File(...)):
+    """
+    WHAT: Accepts a multipart/form-data file upload of a .pt YOLO weight file.
+    WHY:  Operators can upload their custom-trained model (e.g., trained on
+          specific sand-mining imagery) without needing SSH access to the server.
+    HOW:
+        - FastAPI's UploadFile is a thin async wrapper over Python's SpooledTemporaryFile.
+          It reads the incoming HTTP body in chunks using Starlette's form-data parser,
+          which streams directly from the socket rather than loading the whole file
+          into memory at once. This is critical because a YOLO .pt file is typically
+          100MB–300MB.
+        - We use aiofiles-compatible reads: `await file.read()` reads the entire
+          spooled buffer. For very large files you could do chunked reads, but for
+          model files this is fine.
+        - The file is saved into the same `models/weights/` directory that
+          `_yolo_inference_loop` already resolves from. This means the newly
+          uploaded file is immediately available for hot-swap with zero code
+          path changes elsewhere.
+    """
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Security: ONLY allow .pt files. Strip any path traversal attack.
+    # os.path.basename eliminates directory components like ../../etc/passwd
+        filename = Path(file.filename).name
+    ALLOWED_EXTENSIONS = {".pt", ".onnx", ".engine", ".torchscript"}
+    if Path(filename).suffix.lower() not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported format '{}'. Allowed: {}".format(
+                Path(filename).suffix, ", ".join(ALLOWED_EXTENSIONS)
+            )
+        )
+
+    weights_dir = Path(__file__).resolve().parent.parent.parent / "models" / "weights"
+    weights_dir.mkdir(parents=True, exist_ok=True)
+
+    dest_path = weights_dir / filename
+
+    # Read the uploaded bytes from the socket buffer into memory, then flush to disk.
+    # `await file.read()` is non-blocking. The OS write below IS blocking, but it's
+    # fast because we're just writing to local disk.
+    contents = await file.read()
+    with open(dest_path, "wb") as f:
+        f.write(contents)
+
+    file_size_mb = round(len(contents) / (1024 * 1024), 2)
+    logger.info("Model uploaded: {} ({} MB) -> {}".format(filename, file_size_mb, dest_path))
+
+    return {
+        "status": "ok",
+        "filename": filename,
+        "size_mb": file_size_mb,
+        "message": "Model saved. Select '{}' from the dropdown to activate it.".format(filename)
+    }
+
+
+@app.get("/api/model/list")
+def list_models(request: Request):
+    """
+    WHAT: Returns a JSON list of all .pt weight files available on disk.
+    WHY:  The frontend fetches this on page-load to dynamically populate the
+          <select> dropdown. This means the dropdown is always in sync with
+          what files are actually present on the server — no hardcoding.
+    HOW:
+        - Path.glob("*.pt") walks the OS directory inode table for files matching
+          the pattern. This is an O(n) syscall on the directory, not a recursive
+          tree walk, so it's extremely fast regardless of how many model files exist.
+        - We also return file sizes so the operator knows if they uploaded a
+          real model or accidentally uploaded something empty/corrupt.
+    """
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    weights_dir = Path(__file__).resolve().parent.parent.parent / "models" / "weights"
+    weights_dir.mkdir(parents=True, exist_ok=True)
+
+    models = []
+    for pt_file in sorted(
+        f for ext in ("*.pt", "*.onnx", "*.engine", "*.torchscript")
+        for f in weights_dir.glob(ext)
+    ):
+        models.append({
+            "filename": pt_file.name,
+            "size_mb": round(pt_file.stat().st_size / (1024 * 1024), 2)
+        })
+
+    # Always ensure the baseline yolov8n.pt is listed even if not yet downloaded
+    base_names = [m["filename"] for m in models]
+    if "yolov8n.pt" not in base_names:
+        models.insert(0, {"filename": "yolov8n.pt", "size_mb": 0, "note": "auto-download on first use"})
+
+    return {"models": models}
+
 @app.post("/api/flight/config")
 async def update_flight_config(request: Request, data: dict):
     """

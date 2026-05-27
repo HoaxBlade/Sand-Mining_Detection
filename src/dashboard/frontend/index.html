@@ -840,12 +840,18 @@
                             <!--  DYNAMIC MID-FLIGHT MODEL SWITCHER  -->
                             <h4 style="font-size: 11px; margin-bottom: 4px; color: #60a5fa;">Mid-Flight AI Model:</h4>
                             <select id="model-select"
-                                style="width:100%; padding: 4px; font-size:11px; background:#111827; border:1px solid #374151; color:#fff; border-radius:4px; outline:none; margin-bottom: 6px;">
-                                <option value="yolov8n.pt">YOLOv8 Nano (Fastest)</option>
-                                <option value="yolov8m.pt">YOLOv8 Medium (Accurate)</option>
-                                <option value="yolov10n.pt">YOLOv10 Nano (Optimal)</option>
-                                <option value="custom_river_model.pt">Custom Fine-Tuned Model</option>
+                                style="width:100%; padding: 4px; font-size:11px; background:#111827; border:1px solid #374151; color:#fff; border-radius:4px; outline:none; margin-bottom: 4px;">
+                                <option value="yolov8n.pt">YOLOv8 Nano (loading...)</option>
                             </select>
+                            <div style="display:flex; gap:4px; align-items:center; margin-bottom:6px;">
+                                <input type="file" id="model-upload-input" accept=".pt,.onnx,.engine,.torchscript" style="display:none;">
+                                <button id="model-upload-btn"
+                                    style="padding:3px 8px; font-size:10px; background:#1e3a5f; color:#60a5fa; border:1px solid #3b82f6; border-radius:4px; cursor:pointer; white-space:nowrap;">
+                                    Upload .pt
+                                </button>
+                                <span id="model-upload-status" style="font-size:10px; color:#9ca3af;"></span>
+                            </div>
+
 
                             <!--  DYNAMIC GEOFENCE START TRIGGER CONTROLS  -->
                             <h4 style="font-size: 11px; margin-bottom: 4px; color: #34d399;">Detection Start Geofence:</h4>
@@ -1763,6 +1769,91 @@
             const latInput = document.getElementById('geofence-lat');
             const lonInput = document.getElementById('geofence-lon');
             const radiusSelect = document.getElementById('geofence-radius');
+
+
+            // ─── DYNAMIC MODEL DROPDOWN ─────────────────────────────────────────
+            // Fetches the actual .pt files on disk from GET /api/model/list and
+            // rebuilds the <select> options from scratch. This replaces the hardcoded
+            // option list. currentActive is the filename to pre-select after rebuild.
+            function refreshModelDropdown(currentActive) {
+                fetch(BASE_PATH + 'api/model/list')
+                    .then(r => r.json())
+                    .then(data => {
+                        const currentVal = currentActive || modelSelect.value;
+                        modelSelect.innerHTML = '';
+                        data.models.forEach(m => {
+                            const opt = document.createElement('option');
+                            opt.value = m.filename;
+                            opt.textContent = m.filename + (m.size_mb > 0 ? ' (' + m.size_mb + ' MB)' : ' (auto)');
+                            modelSelect.appendChild(opt);
+                        });
+                        if (currentVal) modelSelect.value = currentVal;
+                    })
+                    .catch(err => console.debug('Model list fetch failed:', err));
+            }
+
+            // Run immediately on page load — populates dropdown from real disk state
+            refreshModelDropdown(null);
+
+            // ─── CUSTOM MODEL FILE UPLOAD ────────────────────────────────────────
+            const modelUploadBtn = document.getElementById('model-upload-btn');
+            const modelUploadInput = document.getElementById('model-upload-input');
+            const modelUploadStatus = document.getElementById('model-upload-status');
+
+            // Clicking styled button triggers the hidden native file input
+            modelUploadBtn.addEventListener('click', () => {
+                modelUploadInput.click();
+            });
+
+            // Fires when the user picks a file from the OS dialog
+            modelUploadInput.addEventListener('change', async () => {
+                const file = modelUploadInput.files[0];
+                if (!file) return;
+
+                // Client-side .pt validation before wasting a network round-trip
+                const allowedExts = ['.pt', '.onnx', '.engine', '.torchscript'];
+                const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+                if (!allowedExts.includes(ext)) {
+                    modelUploadStatus.textContent = '✗ Unsupported format. Use: ' + allowedExts.join(', ');
+                    modelUploadStatus.style.color = '#f43f5e';
+                    return;
+                }
+                
+                modelUploadStatus.textContent = 'Uploading...';
+                modelUploadStatus.style.color = '#fbbf24';
+
+                // FormData auto-encodes as multipart/form-data with correct boundary.
+                // Do NOT set Content-Type manually — the browser must set it so the
+                // boundary string gets included. Without the boundary, FastAPI's
+                // form parser cannot split the body and the upload fails with 422.
+                const formData = new FormData();
+                formData.append('file', file);
+
+                try {
+                    const res = await fetch(BASE_PATH + 'api/model/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        modelUploadStatus.textContent = '✓ ' + data.filename + ' (' + data.size_mb + ' MB)';
+                        modelUploadStatus.style.color = '#34d399';
+                        // Rebuild dropdown and auto-select the uploaded model
+                        refreshModelDropdown(data.filename);
+                    } else {
+                        modelUploadStatus.textContent = '✗ ' + (data.detail || 'Upload failed');
+                        modelUploadStatus.style.color = '#f43f5e';
+                    }
+                } catch (err) {
+                    modelUploadStatus.textContent = '✗ Network error';
+                    modelUploadStatus.style.color = '#f43f5e';
+                }
+
+                // Reset so the same file can be re-uploaded if needed
+                modelUploadInput.value = '';
+            });
+            // ─────────────────────────────────────────────────────────────────────
+
 
             // Advanced settings collapsible toggle
             const btnToggleAdvanced = document.getElementById('btn-toggle-advanced-hud');
