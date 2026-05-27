@@ -320,22 +320,26 @@ def _video_capture_loop():
             cv2.putText(frame, "LAT: {:.6f}".format(drone_lat), (40, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
             cv2.putText(frame, "LON: {:.6f}".format(drone_lon), (40, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
             
-            # Draw a highly prominent warning box at the center-bottom of the frame
-            # to explain exactly why there is no video feed!
-            box_x1, box_y1 = 340, 480
-            box_x2, box_y2 = 940, 640
-            # Semi-transparent dark background for the alert panel
+            # Draw a highly visible, centered standby box to prevent object-fit cropping
+            box_x1, box_y1 = 320, 210
+            box_x2, box_y2 = 960, 510
+            # Semi-transparent dark alert panel
             cv2.rectangle(frame, (box_x1, box_y1), (box_x2, box_y2), (10, 10, 35), -1)
             # Amber/Orange warning border
-            cv2.rectangle(frame, (box_x1, box_y1), (box_x2, box_y2), (0, 120, 255), 2)
+            cv2.rectangle(frame, (box_x1, box_y1), (box_x2, box_y2), (0, 140, 255), 2)
             
-            # Alert Text
-            cv2.putText(frame, "NO LIVE VIDEO STREAM DETECTED", (box_x1 + 30, box_y1 + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 120, 255), 2)
-            cv2.putText(frame, "Status: Standby (Waiting for drone RTMP stream)", (box_x1 + 30, box_y1 + 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+            # User-friendly warning title
+            cv2.putText(frame, "[ OFFLINE ] DRONE FEED STANDBY", (box_x1 + 40, box_y1 + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 140, 255), 2)
+            cv2.putText(frame, "The live camera feed is not currently connected.", (box_x1 + 40, box_y1 + 95), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 220, 220), 1)
             
-            # Display target ingest URL dynamically so operator knows how to stream
+            # Clear diagnostic checklist instructions
+            cv2.putText(frame, "Please complete the following steps to stream:", (box_x1 + 40, box_y1 + 140), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (160, 160, 160), 1)
+            cv2.putText(frame, "1. Turn ON the drone and the remote controller.", (box_x1 + 40, box_y1 + 185), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (200, 200, 200), 1)
+            cv2.putText(frame, "2. Go to DJI pilot app -> Settings -> Live Stream.", (box_x1 + 40, box_y1 + 225), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (200, 200, 200), 1)
+            
+            # Destination Ingest URL
             stream_target = flight_config.get("video_source", "rtmp://187.127.142.58:1935/live/drone")
-            cv2.putText(frame, "Destination: {}".format(stream_target), (box_x1 + 30, box_y1 + 115), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 200, 100), 1)
+            cv2.putText(frame, "3. Set RTMP URL to: {}".format(stream_target), (box_x1 + 40, box_y1 + 265), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 255, 100), 1)
             
             # Add dynamic scan line sweep animation
             scan_y = int((time.time() * 200) % 720)
