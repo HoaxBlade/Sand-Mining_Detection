@@ -283,39 +283,41 @@ class _DashboardPageState extends State<DashboardPage> {
         children: [
           // Control switches panel
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             color: const Color(0xFF0F172A),
-            child: Row(
+            child: Column(
               children: [
-                Expanded(
-                  child: Card(
-                    color: const Color(0xFF1E293B),
-                    child: SwitchListTile(
-                      title: const Text('Simulate Route', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                      subtitle: const Text('Simulate live DJI GPS logs', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                      value: _isSimulating,
-                      onChanged: (val) {
-                        setState(() => _isSimulating = val);
-                        _addLog('Telemetry simulator ${val ? "ENABLED" : "DISABLED"}');
-                      },
-                      activeColor: const Color(0xFF38BDF8),
-                    ),
+                Card(
+                  margin: EdgeInsets.zero,
+                  color: const Color(0xFF1E293B),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: SwitchListTile(
+                    title: const Text('Route Simulation Mode', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
+                    subtitle: const Text('Generates mock flight telemetry for virtual mapping tests', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                    value: _isSimulating,
+                    onChanged: (val) {
+                      setState(() => _isSimulating = val);
+                      _addLog('Telemetry simulator ${val ? "ENABLED" : "DISABLED"}');
+                    },
+                    activeColor: const Color(0xFF38BDF8),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Card(
-                    color: const Color(0xFF1E293B),
-                    child: SwitchListTile(
-                      title: const Text('Cloud Sync', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                      subtitle: const Text('Stream live to dashboard', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                      value: _isBroadcasting,
-                      onChanged: (val) {
-                        setState(() => _isBroadcasting = val);
-                        _addLog('Cloud telemetry broadcast ${val ? "ACTIVATED" : "DEACTIVATED"}');
-                      },
-                      activeColor: const Color(0xFF10B981),
-                    ),
+                const SizedBox(height: 8),
+                Card(
+                  margin: EdgeInsets.zero,
+                  color: const Color(0xFF1E293B),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: SwitchListTile(
+                    title: const Text('Cloud Telemetry Sync', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
+                    subtitle: const Text('Broadcast live coordinates and battery to the dashboard', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                    value: _isBroadcasting,
+                    onChanged: (val) {
+                      setState(() => _isBroadcasting = val);
+                      _addLog('Cloud telemetry broadcast ${val ? "ACTIVATED" : "DEACTIVATED"}');
+                    },
+                    activeColor: const Color(0xFF10B981),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   ),
                 ),
               ],
