@@ -1,6 +1,27 @@
 # Set platform to 13.0 for DJI iOS SDK compatibility
 platform :ios, '13.0'
 
+# Import the Flutter pod helper script dynamically
+flutter_install_all_ios_pods_path = File.join('Flutter', 'podhelper.rb')
+if File.exist?(flutter_install_all_ios_pods_path)
+  require flutter_install_all_ios_pods_path
+else
+  flutter_root = nil
+  generated_config_path = File.join('Flutter', 'Generated.xcconfig')
+  if File.exist?(generated_config_path)
+    File.foreach(generated_config_path) do |line|
+      if line =~ /FLUTTER_ROOT=(.*)/
+        flutter_root = $1.strip
+      end
+    end
+  end
+  if flutter_root
+    require File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
+  else
+    raise "Could not find podhelper.rb. Make sure you run 'flutter pub get' first."
+  end
+end
+
 # CocoaPods analytics sends network stats. If you want to disable this, uncomment the following line.
 # COCOAPODS_DISABLE_ANALYTICS = true
 
@@ -8,7 +29,7 @@ target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
-  flutter_install_all_ios_pods File.expand_path(File.join('..', 'Flutter'), __FILE__)
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   
   # DJI iOS Mobile SDK Dependency
   pod 'DJI-SDK-iOS', '~> 4.16'

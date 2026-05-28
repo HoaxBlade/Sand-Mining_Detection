@@ -1,0 +1,23 @@
+PODS:
+  - DJI-SDK-iOS (4.16.2)
+  - Flutter (1.0.0)
+
+DEPENDENCIES:
+  - DJI-SDK-iOS (~> 4.16)
+  - Flutter (from `Flutter`)
+
+SPEC REPOS:
+  trunk:
+    - DJI-SDK-iOS
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+
+SPEC CHECKSUMS:
+  DJI-SDK-iOS: 44308a021c3b95a912be52c4e7a8e0a27e5434f5
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+
+PODFILE CHECKSUM: 5892d1bce8d1e6dde0be71d14bac822d03f94407
+
+COCOAPODS: 1.16.2
