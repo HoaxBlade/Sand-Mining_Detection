@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter/services.dart';
 
 void main() {
   runApp(const TelemetryBridgeApp());
@@ -38,9 +39,13 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
+  // Native Platform Channel Bridge
+  static const _platform = MethodChannel('sq.rogue.telemetry_bridge/dji');
+
   // Connection states
   bool _isBroadcasting = false;
   bool _isSimulating = true;
+  bool _isDJIConnected = false;
   String _serverUrl = 'https://sandmining.nielitbhubaneswar.in/api/edge/sync';
 
   // Telemetry variables
@@ -64,6 +69,64 @@ class _DashboardPageState extends State<DashboardPage> {
     _addLog('System Initialized. Ready for flight connection.');
     _addLog('Target Server: $_serverUrl');
     _startTelemetryLoop();
+    _setupPlatformChannel();
+  }
+
+  void _setupPlatformChannel() {
+    _platform.setMethodCallHandler(_handleNativeMethodCall);
+    // Trigger DJI SDK registration check inside native Kotlin
+    _platform.invokeMethod('startDJISDK').then((value) {
+      _addLog('[SDK] Platform channel initialized: $value');
+    }).catchError((e) {
+      _addLog('[SDK ERROR] Platform channel failed: $e');
+    });
+  }
+
+  Future<void> _handleNativeMethodCall(MethodCall call) async {
+    switch (call.method) {
+      case 'onConsoleLog':
+        _addLog(call.arguments as String);
+        break;
+      case 'onSDKStatusUpdate':
+        final Map data = call.arguments as Map;
+        if (data['status'] == 'REGISTERED') {
+          _addLog('[SDK] DJI Registration status: SUCCESS');
+        } else {
+          _addLog('[SDK ERROR] DJI Registration status: FAILED (${data['error']})');
+        }
+        break;
+      case 'onDJIConnectionUpdate':
+        final bool connected = call.arguments as bool;
+        setState(() {
+          _isDJIConnected = connected;
+          if (connected) {
+            // Auto disable simulator upon actual physical controller plug-in!
+            _isSimulating = false;
+          }
+        });
+        _addLog('[DJI] Aircraft Connection state updated: ${connected ? "CONNECTED" : "DISCONNECTED"}');
+        break;
+      case 'onTelemetryUpdate':
+        final Map data = call.arguments as Map;
+        if (!_isSimulating) {
+          setState(() {
+            _lat = data['lat'] as double;
+            _lon = data['lon'] as double;
+            _altitude = data['altitude'] as double;
+            // Native speed is in m/s, convert to km/h for pilot HUD display
+            _speed = (data['speed'] as double) * 3.6;
+          });
+        }
+        break;
+      case 'onBatteryUpdate':
+        final int batPercent = call.arguments as int;
+        if (!_isSimulating) {
+          setState(() {
+            _battery = batPercent;
+          });
+        }
+        break;
+    }
   }
 
   @override
@@ -151,8 +214,23 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  Color _getStatusColor() {
+    if (!_isBroadcasting) {
+      return const Color(0xFFEF4444); // Red: Broadcasting Off
+    }
+    if (_isDJIConnected) {
+      return const Color(0xFF10B981); // Emerald Green: Active Drone Telemetry Sync
+    }
+    if (_isSimulating) {
+      return const Color(0xFF38BDF8); // Neon Blue: Route Simulator Active
+    }
+    return const Color(0xFFF59E0B); // Amber Orange: Waiting for Physical Drone Accessory
+  }
+
   @override
   Widget build(BuildContext context) {
+    final statusColor = _getStatusColor();
+
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -161,11 +239,11 @@ class _DashboardPageState extends State<DashboardPage> {
               width: 10,
               height: 10,
               decoration: BoxDecoration(
-                color: _isBroadcasting ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                color: statusColor,
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: _isBroadcasting ? const Color(0xFF10B981).withOpacity(0.5) : const Color(0xFFEF4444).withOpacity(0.5),
+                    color: statusColor.withOpacity(0.5),
                     blurRadius: 8,
                     spreadRadius: 2,
                   )

@@ -24,7 +24,7 @@ android {
         applicationId = "sq.rogue.telemetry_bridge"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        minSdk = 21 // DJI Mobile SDK requires API level 21 or higher
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -37,6 +37,19 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    packaging {
+        resources {
+            excludes.add("META-INF/rxjava.properties")
+            excludes.add("assets/location_map_gps_locked.png")
+            excludes.add("assets/location_map_gps_3d.png")
+        }
+    }
+}
+
+dependencies {
+    implementation("com.dji:dji-sdk:4.16.2")
+    compileOnly("com.dji:dji-sdk-provided:4.16.2")
 }
 
 flutter {
