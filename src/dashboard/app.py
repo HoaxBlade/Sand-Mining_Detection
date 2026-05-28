@@ -2173,6 +2173,19 @@ async def stop_recording(request: Request):
             "size_bytes": file_size
         }
 
+@app.get("/api/debug/threads")
+async def debug_threads():
+    import threading
+    threads_info = []
+    for t in threading.enumerate():
+        threads_info.append({
+            "name": t.name,
+            "id": t.ident,
+            "native_id": getattr(t, "native_id", None),
+            "is_alive": t.is_alive()
+        })
+    return {"threads": threads_info}
+
 @app.get("/api/admin/recordings")
 async def list_recordings(request: Request):
     user = get_session_user(request)
