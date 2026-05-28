@@ -178,7 +178,7 @@ def _video_capture_loop():
     pushes raw BGR frames to latest_bgr_frame, and raw JPEG frames into latest_raw_frame.
     It does NOT run YOLO inference, keeping frame acquisition extremely fast (30 FPS).
     """
-    global latest_raw_frame, latest_overlay_frame, latest_webcam_detections, local_webcam_mode, last_webcam_frame_time, latest_bgr_frame
+    global latest_raw_frame, latest_overlay_frame, latest_webcam_detections, local_webcam_mode, last_webcam_frame_time, latest_bgr_frame, use_synthetic_video
 
     try:
         import cv2
@@ -188,7 +188,6 @@ def _video_capture_loop():
 
     cap = None
     grabber = None
-    use_synthetic_video = True
     current_source = None
     is_rtsp = False
     is_file = False
@@ -311,16 +310,15 @@ def _video_capture_loop():
             for y in range(0, 720, 80):
                 cv2.line(frame, (0, y), (1280, y), (32, 24, 18), 1)
                 
-            # Draw central tactical HUD green crosshair
-            cv2.line(frame, (640 - 20, 360), (640 + 20, 360), (0, 255, 0), 1)
-            cv2.line(frame, (640, 360 - 20), (640, 360 + 20), (0, 255, 0), 1)
+            # Draw central tactical HUD green crosshair (slightly darker to not clash with warning box)
+            cv2.line(frame, (640 - 20, 360), (640 + 20, 360), (0, 160, 0), 1)
+            cv2.line(frame, (640, 360 - 20), (640, 360 + 20), (0, 160, 0), 1)
             
-            # Print status message
+            # Print subtle status coordinate indicators
             drone_lat = latest_drone_coords.get("lat", 0.0)
             drone_lon = latest_drone_coords.get("lon", 0.0)
-            cv2.putText(frame, "TACTICAL RAW STREAM (SIMULATED)", (40, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-            cv2.putText(frame, "LAT: {:.6f}".format(drone_lat), (40, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-            cv2.putText(frame, "LON: {:.6f}".format(drone_lon), (40, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+            cv2.putText(frame, "LAT: {:.6f}".format(drone_lat), (40, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 150, 100), 1)
+            cv2.putText(frame, "LON: {:.6f}".format(drone_lon), (40, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 150, 100), 1)
             
             # Add dynamic scan line sweep animation
             scan_y = int((time.time() * 200) % 720)
@@ -680,6 +678,7 @@ manager = ConnectionManager()
 latest_raw_frame = b""
 latest_overlay_frame = b""
 latest_webcam_detections = []
+use_synthetic_video = True
 
 # Holds the loaded YOLO model  set once at startup, used in _video_capture_loop
 _yolo_model = None
@@ -696,7 +695,7 @@ async def _telemetry_fallback_broadcast_loop():
     WHY: Allows operators using standard DJI Pilot/Fly apps (without custom API relay subs)
     to set the drone location by double-clicking on the map!
     """
-    global latest_drone_coords, flight_config, manager
+    global latest_drone_coords, flight_config, manager, use_synthetic_video
     await asyncio.sleep(4.0)  # Wait for startup and uvicorn bind
     
     # We initialize the server-side cluster engine here as well to ensure
@@ -737,6 +736,15 @@ async def _telemetry_fallback_broadcast_loop():
                     }
                 }
                 await manager.broadcast(tele_payload)
+            
+            # Periodically broadcast stream standby status to the frontend!
+            await manager.broadcast({
+                "type": "stream_status",
+                "payload": {
+                    "use_synthetic_video": use_synthetic_video,
+                    "video_source": str(flight_config.get("video_source", "rtmp://187.127.142.58:1935/live/drone"))
+                }
+            })
         except Exception as e:
             logger.debug(f"Telemetry fallback loop: {e}")
         await asyncio.sleep(1.0)
@@ -1249,10 +1257,17 @@ async def receive_edge_frame(stream_type: str, request: Request):
 @app.post("/api/edge/sync")
 async def receive_edge_sync(data: dict):
     """
-    Receives real-time telemetry logs, detections, and alerts from the Jetson Nano
+    Receives real-time telemetry logs, detections, and alerts from the Jetson Nano/Mobile App
     and broadcasts them immediately to the operator dashboard via WebSockets.
     Also handles base64-encoded evidence images from the offline sync worker.
     """
+    # Auto-wrap flat telemetry payloads from the mobile companion app
+    if "lat" in data and "lon" in data and data.get("type") is None:
+        data = {
+            "type": "telemetry",
+            "payload": data
+        }
+
     logger.info("Sync event received. Type: {}".format(data.get('type')))
 
     # If payload contains a base64 evidence image, decode and save it cloud-side
@@ -1558,6 +1573,109 @@ def get_flight_config(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized")
     return flight_config
 
+
+# ============================================================
+# MODEL MANAGEMENT — Upload & List Custom YOLO Weights
+# ============================================================
+
+from fastapi import UploadFile, File, Form
+
+@app.post("/api/model/upload")
+async def upload_model(request: Request, file: UploadFile = File(...)):
+    """
+    WHAT: Accepts a multipart/form-data file upload of a .pt YOLO weight file.
+    WHY:  Operators can upload their custom-trained model (e.g., trained on
+          specific sand-mining imagery) without needing SSH access to the server.
+    HOW:
+        - FastAPI's UploadFile is a thin async wrapper over Python's SpooledTemporaryFile.
+          It reads the incoming HTTP body in chunks using Starlette's form-data parser,
+          which streams directly from the socket rather than loading the whole file
+          into memory at once. This is critical because a YOLO .pt file is typically
+          100MB–300MB.
+        - We use aiofiles-compatible reads: `await file.read()` reads the entire
+          spooled buffer. For very large files you could do chunked reads, but for
+          model files this is fine.
+        - The file is saved into the same `models/weights/` directory that
+          `_yolo_inference_loop` already resolves from. This means the newly
+          uploaded file is immediately available for hot-swap with zero code
+          path changes elsewhere.
+    """
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Security: ONLY allow .pt files. Strip any path traversal attack.
+    # os.path.basename eliminates directory components like ../../etc/passwd
+        filename = Path(file.filename).name
+    ALLOWED_EXTENSIONS = {".pt", ".onnx", ".engine", ".torchscript"}
+    if Path(filename).suffix.lower() not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported format '{}'. Allowed: {}".format(
+                Path(filename).suffix, ", ".join(ALLOWED_EXTENSIONS)
+            )
+        )
+
+    weights_dir = Path(__file__).resolve().parent.parent.parent / "models" / "weights"
+    weights_dir.mkdir(parents=True, exist_ok=True)
+
+    dest_path = weights_dir / filename
+
+    # Read the uploaded bytes from the socket buffer into memory, then flush to disk.
+    # `await file.read()` is non-blocking. The OS write below IS blocking, but it's
+    # fast because we're just writing to local disk.
+    contents = await file.read()
+    with open(dest_path, "wb") as f:
+        f.write(contents)
+
+    file_size_mb = round(len(contents) / (1024 * 1024), 2)
+    logger.info("Model uploaded: {} ({} MB) -> {}".format(filename, file_size_mb, dest_path))
+
+    return {
+        "status": "ok",
+        "filename": filename,
+        "size_mb": file_size_mb,
+        "message": "Model saved. Select '{}' from the dropdown to activate it.".format(filename)
+    }
+
+
+@app.get("/api/model/list")
+def list_models(request: Request):
+    """
+    WHAT: Returns a JSON list of all .pt weight files available on disk.
+    WHY:  The frontend fetches this on page-load to dynamically populate the
+          <select> dropdown. This means the dropdown is always in sync with
+          what files are actually present on the server — no hardcoding.
+    HOW:
+        - Path.glob("*.pt") walks the OS directory inode table for files matching
+          the pattern. This is an O(n) syscall on the directory, not a recursive
+          tree walk, so it's extremely fast regardless of how many model files exist.
+        - We also return file sizes so the operator knows if they uploaded a
+          real model or accidentally uploaded something empty/corrupt.
+    """
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    weights_dir = Path(__file__).resolve().parent.parent.parent / "models" / "weights"
+    weights_dir.mkdir(parents=True, exist_ok=True)
+
+    models = []
+    for pt_file in sorted(
+        f for ext in ("*.pt", "*.onnx", "*.engine", "*.torchscript")
+        for f in weights_dir.glob(ext)
+    ):
+        models.append({
+            "filename": pt_file.name,
+            "size_mb": round(pt_file.stat().st_size / (1024 * 1024), 2)
+        })
+
+    # Always ensure the baseline yolov8n.pt is listed even if not yet downloaded
+    base_names = [m["filename"] for m in models]
+    if "yolov8n.pt" not in base_names:
+        models.insert(0, {"filename": "yolov8n.pt", "size_mb": 0, "note": "auto-download on first use"})
+
+    return {"models": models}
 
 @app.post("/api/flight/config")
 async def update_flight_config(request: Request, data: dict):
@@ -1941,9 +2059,15 @@ async def start_recording(request: Request):
     if not user or user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Forbidden: Admin privilege required.")
         
-    global is_recording, recording_writer, recording_start_time, recording_filepath, recording_filename, recording_lock
+    global is_recording, recording_writer, recording_start_time, recording_filepath, recording_filename, recording_lock, use_synthetic_video
     import cv2
     with recording_lock:
+        if use_synthetic_video:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot start recording: No active drone camera feed is connected (currently in standby)."
+            )
+            
         if is_recording:
             return {"status": "already_recording", "filename": recording_filename}
             
@@ -1990,6 +2114,32 @@ async def stop_recording(request: Request):
         recording_writer = None
         
         duration = round(time.time() - recording_start_time, 1)
+        
+        # Transcode raw mp4v video to standard H.264 (libx264) using FFmpeg
+        # so that it is natively playable inside HTML5 <video> tags in all modern web browsers.
+        if recording_filepath.exists():
+            try:
+                import subprocess
+                temp_filepath = recording_filepath.parent / "temp_{}".format(recording_filename)
+                logger.info("Transcoding raw recorded video to browser-compatible H.264...")
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", str(recording_filepath),
+                    "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p",
+                    "-an",
+                    str(temp_filepath)
+                ]
+                res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=20.0)
+                if res.returncode == 0 and temp_filepath.exists():
+                    recording_filepath.unlink(missing_ok=True)
+                    temp_filepath.rename(recording_filepath)
+                    logger.info("Transcoding completed successfully! Video file converted to H.264 AVC.")
+                else:
+                    logger.warning("FFmpeg transcoding failed (returncode {}): {}".format(res.returncode, res.stderr))
+            except Exception as ex:
+                logger.error("Failed to transcode recorded video to H.264: {}".format(ex))
+                
         file_size = 0
         if recording_filepath.exists():
             file_size = recording_filepath.stat().st_size

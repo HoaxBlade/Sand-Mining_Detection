@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- DJI Remote Controller USB Accessory Identifiers -->
+    <usb-accessory manufacturer="dji" model="WM330" />
+    <usb-accessory manufacturer="dji" model="WM331" />
+    <usb-accessory manufacturer="dji" model="WM240" />
+    <usb-accessory manufacturer="dji" model="WM245" />
+    <usb-accessory manufacturer="DJI" model="RM500" />
+    <usb-accessory manufacturer="DJI" model="RC Pro" />
+    <usb-accessory manufacturer="DJI" />
+</resources>
