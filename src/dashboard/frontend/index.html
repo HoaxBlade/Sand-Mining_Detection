@@ -1937,7 +1937,9 @@
         });
 
         function connectWebSocket() {
-            ws = new WebSocket(wsUrl);
+            const sessionId = localStorage.getItem('session_id') || '';
+            const fullWsUrl = wsUrl + (sessionId ? '?token=' + encodeURIComponent(sessionId) : '');
+            ws = new WebSocket(fullWsUrl);
 
             ws.onopen = () => {
                 const statusSpan = document.getElementById('connection-status');

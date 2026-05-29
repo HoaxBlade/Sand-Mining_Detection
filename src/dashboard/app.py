@@ -2316,9 +2316,9 @@ async def set_zone_radius(request: Request, data: dict):
 # WebSocket endpoint
 # WebSocket endpoint
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    # Extract session_id from cookie to verify connection
-    session_id = websocket.cookies.get("session_id")
+async def websocket_endpoint(websocket: WebSocket, token: str = None):
+    # Extract session_id from query params or cookies to verify connection
+    session_id = token or websocket.cookies.get("session_id")
     if not session_id or session_id not in ACTIVE_SESSIONS:
         await websocket.close(code=1008) # Policy Violation
         return
