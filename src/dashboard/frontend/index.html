@@ -1366,7 +1366,12 @@
         const isDecoupled = window.location.hostname.includes('vercel') || 
                             window.location.hostname.includes('github') ||
                             (window.location.hostname === 'localhost' && window.location.port !== '8000');
-        const BACKEND_URL = isDecoupled ? 'https://sandmining.nielitbhubaneswar.in/' : window.location.origin + ORIGINAL_SUBPATH;
+        
+        // Supports build-time Vercel injection of the CLOUD_URL environment variable
+        const INJECTED_URL = '__CLOUD_URL__';
+        const VPS_FALLBACK = INJECTED_URL && !INJECTED_URL.startsWith('__') ? INJECTED_URL : 'https://sandmining.nielitbhubaneswar.in/';
+        
+        const BACKEND_URL = isDecoupled ? VPS_FALLBACK : window.location.origin + ORIGINAL_SUBPATH;
         const WS_BACKEND_URL = BACKEND_URL.replace('http://', 'ws://').replace('https://', 'wss://');
 
         // Map all dynamic API calls to resolve to the absolute BACKEND_URL automatically
