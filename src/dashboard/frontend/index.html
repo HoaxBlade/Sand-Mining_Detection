@@ -670,6 +670,20 @@
 
             <!-- Status bar -->
             <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+                <!-- Drone Selector -->
+                <div class="chip" style="background: rgba(96, 165, 250, 0.08); border-color: rgba(96, 165, 250, 0.15);">
+                    <span style="color: #60a5fa; font-weight: 600; display: flex; align-items: center; gap: 4px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                            <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                            <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                        </svg>
+                        Channel:
+                    </span>
+                    <select id="drone-select" style="background: #111827; border: 1px solid #374151; color: #e5e7eb; border-radius: 4px; padding: 2px 6px; font-size: 11px; font-weight: 600; outline: none; cursor: pointer; font-family: inherit;">
+                        <option value="default_drone">Default Drone</option>
+                    </select>
+                </div>
                 <!-- Connection -->
                 <div class="chip">
                     <span>Status:</span>
@@ -1315,26 +1329,12 @@
             });
         })();
 
-        // Flight trail
-        let flightTrail = L.polyline([], {
-            color: '#3b82f6',
-            weight: 2.5,
-            opacity: 0.7,
-            dashArray: '5, 8'
-        }).addTo(map);
+        // Multi-drone registries
+        let droneMarkersMap = {};
+        let flightTrailsMap = {};
+        let activeDronesRegistry = new Set(['default_drone']);
+        let currentDroneId = 'default_drone';
 
-        // Drone icon
-        const droneIcon = L.divIcon({
-            html: `
-                <div style="position:relative; display:flex; align-items:center; justify-content:center;">
-                    <div style="width:12px; height:12px; background:#3b82f6; border:2px solid white; border-radius:50%; box-shadow:0 0 6px rgba(59,130,246,0.6);"></div>
-                </div>
-            `,
-            className: 'custom-drone-icon',
-            iconSize: [16, 16]
-        });
-
-        let droneMarker = L.marker([0, 0], { icon: droneIcon, opacity: 0 }).addTo(map);
         let detectionMarkers = [];
         let followDrone = false;
         let lastDroneLatlng = null;
@@ -1520,6 +1520,67 @@
         const wsUrl = `${protocol}//${window.location.host}${BASE_PATH}ws`;
         let ws;
 
+        // Update styling of all drone markers on active channel swap
+        function updateDroneMarkerStyles() {
+            Object.keys(droneMarkersMap).forEach(id => {
+                const marker = droneMarkersMap[id];
+                const isActive = id === currentDroneId;
+                const icon = L.divIcon({
+                    html: `
+                        <div style="position:relative; display:flex; align-items:center; justify-content:center;">
+                            <div style="width:12px; height:12px; background:${isActive ? '#3b82f6' : '#a855f7'}; border:2px solid white; border-radius:50%; box-shadow:0 0 6px rgba(0,0,0,0.5);"></div>
+                            <span style="position:absolute; top:-18px; background:rgba(17,24,39,0.85); color:white; padding:1px 4px; border-radius:3px; font-size:9px; white-space:nowrap; border:1px solid #374151; font-weight:${isActive ? '700' : 'normal'}; border-color:${isActive ? '#3b82f6' : '#374151'};">${id === 'default_drone' ? 'Drone' : id}</span>
+                        </div>
+                    `,
+                    className: 'custom-drone-icon',
+                    iconSize: [16, 16]
+                });
+                marker.setIcon(icon);
+                
+                const trail = flightTrailsMap[id];
+                if (trail) {
+                    trail.setStyle({
+                        color: isActive ? '#3b82f6' : '#a855f7'
+                    });
+                }
+            });
+        }
+
+        // Setup dropdown change listener
+        document.getElementById('drone-select').addEventListener('change', (e) => {
+            const nextDroneId = e.target.value;
+            if (nextDroneId === currentDroneId) return;
+
+            // Unsubscribe from previous drone channel
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    action: 'unsubscribe',
+                    drone_id: currentDroneId
+                }));
+                // Subscribe to next drone channel
+                ws.send(JSON.stringify({
+                    action: 'subscribe',
+                    drone_id: nextDroneId
+                }));
+            }
+
+            currentDroneId = nextDroneId;
+            updateDroneMarkerStyles();
+
+            // Hot-swap stream sources
+            document.getElementById('img-stream-raw').src = BASE_PATH + 'stream/raw?drone_id=' + encodeURIComponent(currentDroneId);
+            document.getElementById('img-stream-overlay').src = BASE_PATH + 'stream/overlay?drone_id=' + encodeURIComponent(currentDroneId);
+
+            // Re-center map to active drone if position is known
+            const activeMarker = droneMarkersMap[currentDroneId];
+            if (activeMarker) {
+                const latlng = activeMarker.getLatLng();
+                if (latlng) {
+                    map.setView(latlng, map.getZoom(), { animate: true });
+                }
+            }
+        });
+
         function connectWebSocket() {
             ws = new WebSocket(wsUrl);
 
@@ -1527,13 +1588,30 @@
                 const statusSpan = document.getElementById('connection-status');
                 statusSpan.style.color = '#22c55e';
                 statusSpan.innerHTML = `<span class="dot dot-green"></span> Online`;
+
+                // Subscribe to currently active drone channel
+                ws.send(JSON.stringify({
+                    action: 'subscribe',
+                    drone_id: currentDroneId
+                }));
             };
 
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
+                const senderDroneId = data.drone_id || 'default_drone';
+
+                // Dynamically discover new drones checking in
+                if (senderDroneId && !activeDronesRegistry.has(senderDroneId)) {
+                    activeDronesRegistry.add(senderDroneId);
+                    const droneSelect = document.getElementById('drone-select');
+                    const opt = document.createElement('option');
+                    opt.value = senderDroneId;
+                    opt.textContent = senderDroneId === 'default_drone' ? 'Default Drone' : senderDroneId;
+                    droneSelect.appendChild(opt);
+                }
 
                 if (data.type === 'telemetry') {
-                    handleTelemetryUpdate(data.payload);
+                    handleTelemetryUpdate(data.payload, senderDroneId);
                 } else if (data.type === 'detections') {
                     handleDetectionsAlert(data.payload);
                 } else if (data.type === 'zone_radius_update') {
@@ -1591,22 +1669,52 @@
         };
 
         // Telemetry handler
-        function handleTelemetryUpdate(tele) {
-            document.getElementById('hud-battery').textContent = `${tele.battery}%`;
-            document.getElementById('battery-bar').style.width = `${tele.battery}%`;
-            document.getElementById('hud-altitude').textContent = `${tele.altitude.toFixed(1)}m`;
-            document.getElementById('hud-speed').textContent = `${(tele.speed * 3.6).toFixed(1)} km/h`;
-            document.getElementById('hud-coordinates').textContent = `${tele.lat.toFixed(5)}, ${tele.lon.toFixed(5)}`;
-            document.getElementById('raw-stream-time').textContent = new Date(tele.timestamp).toLocaleTimeString();
+        function handleTelemetryUpdate(tele, senderDroneId = 'default_drone') {
+            if (senderDroneId === currentDroneId) {
+                document.getElementById('hud-battery').textContent = `${tele.battery}%`;
+                document.getElementById('battery-bar').style.width = `${tele.battery}%`;
+                document.getElementById('hud-altitude').textContent = `${tele.altitude.toFixed(1)}m`;
+                document.getElementById('hud-speed').textContent = `${(tele.speed * 3.6).toFixed(1)} km/h`;
+                document.getElementById('hud-coordinates').textContent = `${tele.lat.toFixed(5)}, ${tele.lon.toFixed(5)}`;
+                document.getElementById('raw-stream-time').textContent = new Date(tele.timestamp).toLocaleTimeString();
+            }
 
             const latlng = [tele.lat, tele.lon];
-            lastDroneLatlng = latlng;
-            droneMarker.setLatLng(latlng);
-            droneMarker.setOpacity(1);
-            flightTrail.addLatLng(latlng);
+            
+            // 1. Get or create drone marker
+            if (!droneMarkersMap[senderDroneId]) {
+                const isActive = senderDroneId === currentDroneId;
+                const markerIcon = L.divIcon({
+                    html: `
+                        <div style="position:relative; display:flex; align-items:center; justify-content:center;">
+                            <div style="width:12px; height:12px; background:${isActive ? '#3b82f6' : '#a855f7'}; border:2px solid white; border-radius:50%; box-shadow:0 0 6px rgba(0,0,0,0.5);"></div>
+                            <span style="position:absolute; top:-18px; background:rgba(17,24,39,0.85); color:white; padding:1px 4px; border-radius:3px; font-size:9px; white-space:nowrap; border:1px solid #374151; font-weight:${isActive ? '700' : 'normal'}; border-color:${isActive ? '#3b82f6' : '#374151'};">${senderDroneId === 'default_drone' ? 'Drone' : senderDroneId}</span>
+                        </div>
+                    `,
+                    className: 'custom-drone-icon',
+                    iconSize: [16, 16]
+                });
+                droneMarkersMap[senderDroneId] = L.marker(latlng, { icon: markerIcon }).addTo(map);
+            } else {
+                droneMarkersMap[senderDroneId].setLatLng(latlng);
+            }
 
-            if (followDrone) {
-                map.panTo(latlng, { animate: true, duration: 0.5 });
+            // 2. Get or create flight trail
+            if (!flightTrailsMap[senderDroneId]) {
+                flightTrailsMap[senderDroneId] = L.polyline([], {
+                    color: senderDroneId === currentDroneId ? '#3b82f6' : '#a855f7',
+                    weight: 2.5,
+                    opacity: 0.7,
+                    dashArray: '5, 8'
+                }).addTo(map);
+            }
+            flightTrailsMap[senderDroneId].addLatLng(latlng);
+
+            if (senderDroneId === currentDroneId) {
+                lastDroneLatlng = latlng;
+                if (followDrone) {
+                    map.panTo(latlng, { animate: true, duration: 0.5 });
+                }
             }
         }
 
@@ -1633,7 +1741,7 @@
         // Render map markers based on filters
         function renderActiveMarkers() {
             map.eachLayer(layer => {
-                if (layer instanceof L.Marker && layer !== droneMarker) {
+                if (layer instanceof L.Marker && !Object.values(droneMarkersMap).includes(layer)) {
                     map.removeLayer(layer);
                 }
             });
