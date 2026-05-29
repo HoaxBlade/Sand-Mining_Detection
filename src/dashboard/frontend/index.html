@@ -1490,7 +1490,7 @@
             const rtmpEl = document.getElementById('rtmp-ingest-url');
             if (rtmpEl) {
                 const streamKey = currentDroneId === 'default_drone' ? 'drone' : currentDroneId;
-                const host = window.location.hostname;
+                const host = new URL(BACKEND_URL).hostname;
                 rtmpEl.textContent = `rtmp://${host}:1935/live/${streamKey}`;
             }
         }
@@ -1896,7 +1896,7 @@
             const sourceInput = document.getElementById('stream-source-input');
             if (sourceInput) {
                 const streamKey = currentDroneId === 'default_drone' ? 'drone' : currentDroneId;
-                const host = window.location.hostname;
+                const host = new URL(BACKEND_URL).hostname;
                 sourceInput.value = `rtmp://${host}:1935/live/${streamKey}`;
             }
 
