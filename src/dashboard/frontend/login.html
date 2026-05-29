@@ -378,7 +378,7 @@
         
         // Supports build-time Vercel injection of the CLOUD_URL environment variable
         const INJECTED_URL = '__CLOUD_URL__';
-        const VPS_FALLBACK = INJECTED_URL && !INJECTED_URL.startsWith('__') ? INJECTED_URL : 'https://sandmining.nielitbhubaneswar.in/';
+        const VPS_FALLBACK = INJECTED_URL && !INJECTED_URL.startsWith('__') ? INJECTED_URL : 'https://sandmining.nielitbhubaneswar.in/sand-mining/';
         
         const BACKEND_URL = isDecoupled ? VPS_FALLBACK : window.location.origin + ORIGINAL_SUBPATH;
 
