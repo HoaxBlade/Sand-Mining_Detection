@@ -44,16 +44,16 @@ class _DashboardPageState extends State<DashboardPage> {
 
   // Connection states
   bool _isBroadcasting = false;
-  bool _isSimulating = true;
+  bool _isSimulating = false; // Default simulator to OFF on boot
   bool _isDJIConnected = false;
   String _serverUrl = 'https://sandmining.nielitbhubaneswar.in/api/edge/sync';
 
-  // Telemetry variables
-  double _lat = 26.12555;
-  double _lon = 91.81244;
-  double _altitude = 0.0;
-  double _speed = 0.0;
-  int _battery = 100;
+  // Telemetry variables (boot state: waiting/unacquired)
+  double _lat = 0.0;
+  double _lon = 0.0;
+  double _altitude = -1.0;
+  double _speed = -1.0;
+  int _battery = -1;
 
   // Simulator helper variables
   double _simAngle = 0.0;
@@ -102,6 +102,15 @@ class _DashboardPageState extends State<DashboardPage> {
           if (connected) {
             // Auto disable simulator upon actual physical controller plug-in!
             _isSimulating = false;
+          } else {
+            // Clear state back to waiting if not in simulation mode
+            if (!_isSimulating) {
+              _lat = 0.0;
+              _lon = 0.0;
+              _altitude = -1.0;
+              _speed = -1.0;
+              _battery = -1;
+            }
           }
         });
         _addLog('[DJI] Aircraft Connection state updated: ${connected ? "CONNECTED" : "DISCONNECTED"}');
@@ -189,12 +198,21 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _sendTelemetryToServer() async {
+    if (_lat == 0.0 && _lon == 0.0) {
+      _addLog('Sync Skipped: Waiting for valid GPS coordinates...');
+      return;
+    }
+    if (_battery == -1) {
+      _addLog('Sync Skipped: Waiting for battery telemetry...');
+      return;
+    }
+
     final payload = {
       'lat': _lat,
       'lon': _lon,
-      'altitude': _altitude,
-      'speed': _speed / 3.6, // Server expects m/s, HUD converts back to km/h
-      'battery': _battery,
+      'altitude': _altitude < 0 ? 0.0 : _altitude,
+      'speed': _speed < 0 ? 0.0 : _speed / 3.6, // Server expects m/s, HUD converts back to km/h
+      'battery': _battery < 0 ? 0 : _battery,
     };
 
     try {
@@ -269,12 +287,25 @@ class _DashboardPageState extends State<DashboardPage> {
             icon: const Icon(Icons.refresh),
             onPressed: () {
               setState(() {
-                _lat = 26.12555;
-                _lon = 91.81244;
-                _simAngle = 0.0;
-                _battery = 100;
+                if (_isSimulating) {
+                  _lat = 26.12555;
+                  _lon = 91.81244;
+                  _simAngle = 0.0;
+                  _battery = 100;
+                  _altitude = 65.0;
+                  _speed = 18.5;
+                  _addLog('Telemetry simulator reset to home coordinates.');
+                } else {
+                  if (!_isDJIConnected) {
+                    _lat = 0.0;
+                    _lon = 0.0;
+                    _battery = -1;
+                    _altitude = -1.0;
+                    _speed = -1.0;
+                  }
+                  _addLog('HUD reset to unacquired state (waiting for DJI connection).');
+                }
               });
-              _addLog('Telemetry simulator reset to home coordinates.');
             },
           ),
         ],
@@ -296,7 +327,27 @@ class _DashboardPageState extends State<DashboardPage> {
                     subtitle: const Text('Generates mock flight telemetry for virtual mapping tests', style: TextStyle(fontSize: 11, color: Colors.grey)),
                     value: _isSimulating,
                     onChanged: (val) {
-                      setState(() => _isSimulating = val);
+                      setState(() {
+                        _isSimulating = val;
+                        if (val) {
+                          // Warm up simulator variables instantly
+                          _lat = 26.12555;
+                          _lon = 91.81244;
+                          _battery = 100;
+                          _altitude = 65.0;
+                          _speed = 18.5;
+                          _simAngle = 0.0;
+                        } else {
+                          // Clear back to unacquired state if no real DJI product connected
+                          if (!_isDJIConnected) {
+                            _lat = 0.0;
+                            _lon = 0.0;
+                            _battery = -1;
+                            _altitude = -1.0;
+                            _speed = -1.0;
+                          }
+                        }
+                      });
                       _addLog('Telemetry simulator ${val ? "ENABLED" : "DISABLED"}');
                     },
                     activeColor: const Color(0xFF38BDF8),
@@ -339,25 +390,29 @@ class _DashboardPageState extends State<DashboardPage> {
               children: [
                 _buildHUDCard(
                   'GPS COORDINATES',
-                  '${_lat.toStringAsFixed(5)}, ${_lon.toStringAsFixed(5)}',
+                  (_lat == 0.0 && _lon == 0.0) 
+                      ? 'ACQUIRING GPS...' 
+                      : '${_lat.toStringAsFixed(5)}, ${_lon.toStringAsFixed(5)}',
                   Icons.gps_fixed,
                   const Color(0xFF38BDF8),
                 ),
                 _buildHUDCard(
                   'BATTERY LEVEL',
-                  '$_battery%',
+                  _battery == -1 ? 'WAITING FOR DJI...' : '$_battery%',
                   Icons.battery_charging_full,
-                  _battery > 20 ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                  _battery == -1 
+                      ? Colors.grey 
+                      : (_battery > 20 ? const Color(0xFF10B981) : const Color(0xFFEF4444)),
                 ),
                 _buildHUDCard(
                   'SPEED (RAW)',
-                  '${_speed.toStringAsFixed(1)} km/h',
+                  _speed == -1.0 ? '--' : '${_speed.toStringAsFixed(1)} km/h',
                   Icons.speed,
                   const Color(0xFFF59E0B),
                 ),
                 _buildHUDCard(
                   'ALTITUDE',
-                  '${_altitude.toStringAsFixed(1)} m',
+                  _altitude == -1.0 ? '--' : '${_altitude.toStringAsFixed(1)} m',
                   Icons.landscape,
                   const Color(0xFFA855F7),
                 ),
@@ -383,28 +438,66 @@ class _DashboardPageState extends State<DashboardPage> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
+                      Expanded(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.terminal, color: Color(0xFF38BDF8), size: 14),
+                            const SizedBox(width: 6),
+                            Text(
+                              'PILOT CONSOLE',
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: const Color(0xFF38BDF8).withOpacity(0.8),
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
                       Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.terminal, color: Color(0xFF38BDF8), size: 16),
+                          IconButton(
+                            icon: const Icon(Icons.content_copy, color: Color(0xFF38BDF8), size: 14),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            tooltip: 'Copy Console Logs',
+                            onPressed: () {
+                              if (_logs.isNotEmpty) {
+                                final allLogs = _logs.join('\n');
+                                Clipboard.setData(ClipboardData(text: allLogs));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Console logs successfully copied to clipboard!'),
+                                    duration: Duration(seconds: 2),
+                                    backgroundColor: Color(0xFF10B981), // Neon Green Success
+                                  ),
+                                );
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Console log is currently empty.'),
+                                    duration: Duration(seconds: 2),
+                                    backgroundColor: Color(0xFFEF4444), // Red Warning
+                                  ),
+                                );
+                              }
+                            },
+                          ),
                           const SizedBox(width: 8),
                           Text(
-                            'PILOT RELAY CONSOLE',
+                            'WS/SYNC ACTIVE',
                             style: TextStyle(
-                              color: const Color(0xFF38BDF8).withOpacity(0.8),
-                              fontSize: 12,
+                              color: _isBroadcasting ? const Color(0xFF10B981) : Colors.grey,
+                              fontSize: 9,
                               fontWeight: FontWeight.bold,
-                              fontFamily: 'monospace',
                             ),
                           ),
                         ],
-                      ),
-                      Text(
-                        'WS/SYNC ACTIVE',
-                        style: TextStyle(
-                          color: _isBroadcasting ? const Color(0xFF10B981) : Colors.grey,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
                       ),
                     ],
                   ),
