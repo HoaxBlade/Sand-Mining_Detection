@@ -215,9 +215,34 @@ class EdgePipeline:
             self.cap = cv2.VideoCapture(self.camera_source)
             
         self.grabber = None
+        self.last_reconnect_time = 0.0
+        self.cap = None
+        self.is_network_stream = is_network_stream
         
+        # Initial connection attempt
+        self.connect_camera_source()
+
+    def connect_camera_source(self):
+        """Attempts to open the camera or wireless stream source, with support for low-latency FFMPEG."""
+        if self.cap is not None:
+            try:
+                if self.grabber is not None:
+                    self.grabber.release()
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
+            self.grabber = None
+
+        logger.info(f"Connecting to camera source: {self.camera_source}...")
+        if self.is_network_stream:
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|probesize;32|analyzeduration;0"
+            self.cap = cv2.VideoCapture(self.camera_source, cv2.CAP_FFMPEG)
+        else:
+            self.cap = cv2.VideoCapture(self.camera_source)
+
         if self.cap.isOpened():
-            if is_network_stream:
+            if self.is_network_stream:
                 logger.info(f" [Camera Engine] Initializing low-latency async grabber for wireless stream: '{self.camera_source}'")
                 self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 self.grabber = FreshFrameGrabber(self.cap)
@@ -225,8 +250,10 @@ class EdgePipeline:
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
             logger.info(f" [Camera Engine] Bound camera source '{self.camera_source}' successfully!")
+            return True
         else:
             logger.error(f" [Camera Engine] Failed to open camera source '{self.camera_source}'!")
+            return False
 
     def queue_post(self, request_type, url, data=None, json_data=None):
         if request_type == "post_raw":
@@ -563,6 +590,17 @@ class EdgePipeline:
 
                 # Try to grab real camera frame
                 webcam_frame = None
+                
+                # Automatic Reconnection Retry Loop for RTMP/RTSP streams
+                if self.is_network_stream:
+                    # If the camera is not opened, or we are not receiving frames, retry every 5 seconds
+                    if self.cap is None or not self.cap.isOpened() or (webcam_frame is None and step % 15 == 0):
+                        current_time = time.time()
+                        if current_time - self.last_reconnect_time > 5.0:
+                            logger.info(" [Camera Engine] Connection lost or stream offline. Retrying RTMP/RTSP stream connection...")
+                            self.connect_camera_source()
+                            self.last_reconnect_time = current_time
+
                 if self.grabber is not None:
                     ret_wc, wc_frame = self.grabber.read()
                     if ret_wc and wc_frame is not None:
