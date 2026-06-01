@@ -709,7 +709,6 @@ class ConnectionManager:
         self.active_connections = []
 
     async def connect(self, websocket):
-        await websocket.accept()
         self.active_connections.append(websocket)
         logger.info("New client connected. Total clients: {}".format(len(self.active_connections)))
 
@@ -2315,6 +2314,7 @@ async def set_zone_radius(request: Request, data: dict):
 # WebSocket endpoint
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, token: str = None):
+    await websocket.accept()
     # Extract session_id from query params or cookies to verify connection
     session_id = token or websocket.cookies.get("session_id")
     if not session_id or session_id not in ACTIVE_SESSIONS:
