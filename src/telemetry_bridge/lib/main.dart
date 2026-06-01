@@ -59,6 +59,11 @@ class _DashboardPageState extends State<DashboardPage> {
   String _rtmpStatus = 'IDLE';
   final TextEditingController _rtmpController = TextEditingController();
 
+  // Tap-to-focus state
+  Offset? _focusDot;
+  double _focusDotOpacity = 0.0;
+  Timer? _focusDotTimer;
+
   // Simulator helper variables
   double _simAngle = 0.0;
   Timer? _timer;
@@ -159,6 +164,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void dispose() {
     _timer?.cancel();
+    _focusDotTimer?.cancel();
     _scrollController.dispose();
     _rtmpController.dispose();
     super.dispose();
@@ -752,6 +758,30 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  void _onCameraTap(TapDownDetails details, BoxConstraints constraints) {
+    if (!_isDJIConnected) return;
+    final double normalizedX = (details.localPosition.dx / constraints.maxWidth).clamp(0.1, 0.9);
+    final double normalizedY = (details.localPosition.dy / constraints.maxHeight).clamp(0.1, 0.9);
+
+    setState(() {
+      _focusDot = details.localPosition;
+      _focusDotOpacity = 1.0;
+    });
+
+    // Tell the native layer to focus at this normalized position
+    _platform.invokeMethod('tapFocus', {'x': normalizedX, 'y': normalizedY}).then((_) {
+      _addLog('[CAMERA] Focus locked at (${normalizedX.toStringAsFixed(2)}, ${normalizedY.toStringAsFixed(2)})');
+    }).catchError((e) {
+      _addLog('[CAMERA ERROR] Focus request failed: $e');
+    });
+
+    // Auto-fade the focus ring after 2 seconds
+    _focusDotTimer?.cancel();
+    _focusDotTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _focusDotOpacity = 0.0);
+    });
+  }
+
   Widget _buildRawFeedMonitor() {
     final double currentLat = _lat;
     final double currentLon = _lon;
@@ -786,8 +816,12 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
-        child: Stack(
-          children: [
+        child: LayoutBuilder(
+          builder: (context, constraints) => GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (details) => _onCameraTap(details, constraints),
+            child: Stack(
+              children: [
             Positioned.fill(
               child: Opacity(
                 opacity: 0.1,
@@ -952,14 +986,103 @@ class _DashboardPageState extends State<DashboardPage> {
                     ),
                   ],
                 ),
-              )
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
+              ),
+
+            ],   // end of ...[] spread
+
+            // ── GPS No-Signal Banner (top-right corner) ──
+            if (_isDJIConnected && !_isSimulating && _lat == 0.0)
+              Positioned(
+                top: 8,
+                right: 12,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 500),
+                  opacity: 1.0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFBBF24).withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(6),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFFBBF24).withValues(alpha: 0.4),
+                          blurRadius: 8,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.satellite_alt, size: 12, color: Color(0xFF1C1917)),
+                        SizedBox(width: 5),
+                        Text(
+                          'NO GPS SIGNAL',
+                          style: TextStyle(
+                            color: Color(0xFF1C1917),
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'monospace',
+                            letterSpacing: 0.8,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+            // ── Tap-to-Focus animated ring ──
+            if (_focusDot != null)
+              Positioned(
+                left: _focusDot!.dx - 28,
+                top: _focusDot!.dy - 28,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 400),
+                  opacity: _focusDotOpacity,
+                  child: Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: const Color(0xFFFBBF24),
+                        width: 2.0,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFFBBF24).withValues(alpha: 0.3),
+                          blurRadius: 10,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Positioned(top: 0, left: 0, child: Container(width: 8, height: 2, color: const Color(0xFFFBBF24))),
+                        Positioned(top: 0, left: 0, child: Container(width: 2, height: 8, color: const Color(0xFFFBBF24))),
+                        Positioned(top: 0, right: 0, child: Container(width: 8, height: 2, color: const Color(0xFFFBBF24))),
+                        Positioned(top: 0, right: 0, child: Container(width: 2, height: 8, color: const Color(0xFFFBBF24))),
+                        Positioned(bottom: 0, left: 0, child: Container(width: 8, height: 2, color: const Color(0xFFFBBF24))),
+                        Positioned(bottom: 0, left: 0, child: Container(width: 2, height: 8, color: const Color(0xFFFBBF24))),
+                        Positioned(bottom: 0, right: 0, child: Container(width: 8, height: 2, color: const Color(0xFFFBBF24))),
+                        Positioned(bottom: 0, right: 0, child: Container(width: 2, height: 8, color: const Color(0xFFFBBF24))),
+                        Container(width: 4, height: 4, decoration: const BoxDecoration(color: Color(0xFFFBBF24), shape: BoxShape.circle)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],      // end Stack children
+        ),        // Stack
+      ),          // GestureDetector
+    ),            // LayoutBuilder builder
+  ),              // ClipRRect
+);
+}             // end of _buildRawFeedMonitor()
+}             // end of _DashboardPageState
+
 
 class _HUDGridPainter extends CustomPainter {
   final double horizonOffset;

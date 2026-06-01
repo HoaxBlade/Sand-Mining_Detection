@@ -29,6 +29,8 @@ import dji.sdk.keyvalue.key.KeyTools
 import dji.v5.manager.KeyManager
 import dji.sdk.keyvalue.key.FlightControllerKey
 import dji.sdk.keyvalue.key.BatteryKey
+import dji.sdk.keyvalue.key.CameraKey
+import dji.sdk.keyvalue.value.camera.FocusTargetPoint
 import dji.sdk.keyvalue.value.common.LocationCoordinate3D
 import dji.sdk.keyvalue.value.common.Velocity3D
 import dji.v5.common.callback.CommonCallbacks.KeyListener
@@ -107,6 +109,16 @@ class MainActivity : FlutterActivity() {
                 "stopRTMPStream" -> {
                     stopRTMPStream()
                     result.success("RTMP stopping requested.")
+                }
+                "tapFocus" -> {
+                    val x = call.argument<Double>("x")
+                    val y = call.argument<Double>("y")
+                    if (x != null && y != null) {
+                        tapFocus(x, y)
+                        result.success("Focus requested at ($x, $y)")
+                    } else {
+                        result.error("INVALID_ARGUMENT", "Focus coordinates missing", null)
+                    }
                 }
                 else -> {
                     result.notImplemented()
@@ -270,6 +282,23 @@ class MainActivity : FlutterActivity() {
                 }
             })
             isVelocityListening = true
+        }
+    }
+
+    private fun tapFocus(normalizedX: Double, normalizedY: Double) {
+        try {
+            val focusKey = KeyTools.createKey(CameraKey.KeyCameraFocusTarget)
+            val targetPoint = FocusTargetPoint(normalizedX, normalizedY)
+            KeyManager.getInstance().performAction(focusKey, targetPoint, object : CommonCallbacks.CompletionCallbackWithParam<Boolean> {
+                override fun onSuccess(t: Boolean?) {
+                    sendConsoleLog("[CAMERA] Tap-to-focus success at (${normalizedX.toStringAsFixed(2)}, ${normalizedY.toStringAsFixed(2)})")
+                }
+                override fun onFailure(error: IDJIError) {
+                    sendConsoleLog("[CAMERA] Tap-to-focus failed: ${error.description()}")
+                }
+            })
+        } catch (e: Exception) {
+            sendConsoleLog("[CAMERA ERROR] Tap-to-focus exception: ${e.message}")
         }
     }
 
