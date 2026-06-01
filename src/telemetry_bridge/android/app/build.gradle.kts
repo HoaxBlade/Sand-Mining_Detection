@@ -62,8 +62,9 @@ android {
 }
 
 dependencies {
-    implementation("com.dji:dji-sdk:4.16.2")
-    compileOnly("com.dji:dji-sdk-provided:4.16.2")
+    implementation("com.dji:dji-sdk-v5-aircraft:5.18.0")
+    compileOnly("com.dji:dji-sdk-v5-aircraft-provided:5.18.0")
+    implementation("com.dji:dji-sdk-v5-networkImp:5.18.0")
 
     // Required AndroidX libraries to resolve DJI SDK XML layout linking (ConstraintLayout & AppCompat)
     implementation("androidx.appcompat:appcompat:1.6.1")
