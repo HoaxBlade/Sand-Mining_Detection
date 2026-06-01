@@ -2530,12 +2530,13 @@
 
                 // Auto-Sync directly to VPS on click or drag refinement
                 try {
+                    const sourceInput = document.getElementById('stream-source-input');
                     const payload = {
                         active_model: modelSelect.value || "yolov8n.pt",
                         start_lat: latlng.lat,
                         start_lng: latlng.lng,
                         start_radius_meters: parseFloat(radiusSelect.value) || 500.0,
-                        video_source: "rtmp://187.127.142.58:1935/live/drone",
+                        video_source: (sourceInput && sourceInput.value.trim()) ? sourceInput.value.trim() : "dummy",
                         detection_enabled: true
                     };
                     fetch(BASE_PATH + 'api/flight/config', {
