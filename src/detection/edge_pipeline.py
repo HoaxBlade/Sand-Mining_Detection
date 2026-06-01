@@ -206,7 +206,14 @@ class EdgePipeline:
             is_network_stream = str(self.camera_source).startswith("rtsp://") or str(self.camera_source).startswith("rtmp://") or str(self.camera_source).startswith("http://") or str(self.camera_source).startswith("https://")
             
         logger.info(f"Connecting to camera source: {self.camera_source}...")
-        self.cap = cv2.VideoCapture(self.camera_source)
+        
+        # Configure FFMPEG options for network streams to bypass buffering and avoid timeouts
+        if is_network_stream:
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|probesize;32|analyzeduration;0"
+            self.cap = cv2.VideoCapture(self.camera_source, cv2.CAP_FFMPEG)
+        else:
+            self.cap = cv2.VideoCapture(self.camera_source)
+            
         self.grabber = None
         
         if self.cap.isOpened():
@@ -633,8 +640,8 @@ class EdgePipeline:
                         raw_jpeg = raw_buf.tobytes()
                         overlay_jpeg = overlay_buf.tobytes()
                     else:
-                        # No physical camera feed found, output empty detections
-                        logger.warning(" [Edge Inference] No physical camera frame found. Skipping YOLO inference.")
+                        # Waiting for wireless stream to connect/stabilize
+                        logger.info(" [Camera] Waiting for active wireless drone stream frames...")
                         raw_detections = []
                     
                     # 3. Spatial Aggregation & DBSCAN Clustering
