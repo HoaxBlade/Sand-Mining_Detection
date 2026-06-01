@@ -590,7 +590,15 @@ class EdgePipeline:
 
                 # Try to grab real camera frame
                 webcam_frame = None
-                
+                if self.grabber is not None:
+                    ret_wc, wc_frame = self.grabber.read()
+                    if ret_wc and wc_frame is not None:
+                        webcam_frame = wc_frame
+                elif self.cap is not None and self.cap.isOpened():
+                    ret_wc, wc_frame = self.cap.read()
+                    if ret_wc and wc_frame is not None:
+                        webcam_frame = wc_frame
+
                 # Automatic Reconnection Retry Loop for RTMP/RTSP streams
                 if self.is_network_stream:
                     # If the camera is not opened, or we are not receiving frames, retry every 5 seconds
@@ -600,15 +608,16 @@ class EdgePipeline:
                             logger.info(" [Camera Engine] Connection lost or stream offline. Retrying RTMP/RTSP stream connection...")
                             self.connect_camera_source()
                             self.last_reconnect_time = current_time
-
-                if self.grabber is not None:
-                    ret_wc, wc_frame = self.grabber.read()
-                    if ret_wc and wc_frame is not None:
-                        webcam_frame = wc_frame
-                elif self.cap is not None and self.cap.isOpened():
-                    ret_wc, wc_frame = self.cap.read()
-                    if ret_wc and wc_frame is not None:
-                        webcam_frame = wc_frame
+                            
+                            # Attempt to read frame immediately after reconnecting
+                            if self.grabber is not None:
+                                ret_wc, wc_frame = self.grabber.read()
+                                if ret_wc and wc_frame is not None:
+                                    webcam_frame = wc_frame
+                            elif self.cap is not None and self.cap.isOpened():
+                                ret_wc, wc_frame = self.cap.read()
+                                if ret_wc and wc_frame is not None:
+                                    webcam_frame = wc_frame
 
                 #  B. GEOFENCED INFERENCE FILTER (NO HARDCODING) 
                 # If no start coordinates are configured, default to active for simulation/dry-run testing
