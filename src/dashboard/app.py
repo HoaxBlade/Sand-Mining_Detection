@@ -67,6 +67,10 @@ def get_session_user(request):
     if not session_id and auth_header and auth_header.startswith("Bearer "):
         session_id = auth_header.split(" ")[1]
         
+    # Fallback to query parameter ?token=<session_id> for direct downloads bypassing custom headers
+    if not session_id:
+        session_id = request.query_params.get("token")
+        
     if session_id and session_id in ACTIVE_SESSIONS:
         return ACTIVE_SESSIONS[session_id]
     return None

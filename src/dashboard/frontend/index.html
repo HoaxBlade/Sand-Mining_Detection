@@ -2285,7 +2285,8 @@
 
         document.getElementById('btn-export-pdf').addEventListener('click', () => {
             const link = document.createElement('a');
-            link.href = BASE_PATH + 'api/report/pdf';
+            const token = localStorage.getItem('session_id') || '';
+            link.href = BASE_PATH + 'api/report/pdf' + (token ? '?token=' + token : '');
             link.download = 'sand_mining_report.pdf';
             document.body.appendChild(link);
             link.click();
@@ -2294,7 +2295,8 @@
 
         document.getElementById('btn-export-pdf-critical').addEventListener('click', () => {
             const link = document.createElement('a');
-            link.href = BASE_PATH + 'api/report/pdf?severity=EXTREME';
+            const token = localStorage.getItem('session_id') || '';
+            link.href = BASE_PATH + 'api/report/pdf?severity=EXTREME' + (token ? '&token=' + token : '');
             link.download = 'sand_mining_report_extreme.pdf';
             document.body.appendChild(link);
             link.click();
