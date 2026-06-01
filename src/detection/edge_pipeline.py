@@ -136,14 +136,20 @@ class EdgePipeline:
         self.dynamic_path_generated = False
         self.current_flight_idx = 0
 
-        # Webcam Support Option
-        self.use_webcam = os.environ.get("USE_WEBCAM") == "1"
-        self.cap = None
-        if self.use_webcam:
-            self.cap = cv2.VideoCapture(0)
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-            logger.info(" [Webcam Engine] Bound laptop webcam (camera index 0) successfully!")
+        # Physical Camera Support (Always initialized for real drone/camera testing)
+        self.camera_source = os.getenv("CAMERA_SOURCE", "0")
+        if self.camera_source.isdigit():
+            self.camera_source = int(self.camera_source)
+            
+        logger.info(f"Connecting to physical camera source: {self.camera_source}...")
+        self.cap = cv2.VideoCapture(self.camera_source)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        
+        if self.cap.isOpened():
+            logger.info(f" [Camera Engine] Bound camera source '{self.camera_source}' successfully!")
+        else:
+            logger.error(f" [Camera Engine] Failed to open camera source '{self.camera_source}'!")
 
     def queue_post(self, request_type, url, data=None, json_data=None):
         if self.upload_queue.full():
@@ -463,9 +469,9 @@ class EdgePipeline:
                     'speed': speed, 'heading': heading, 'timestamp': timestamp, 'battery': int(battery)
                 }
 
-                # Try to grab real webcam frame if active
+                # Try to grab real camera frame
                 webcam_frame = None
-                if self.use_webcam and self.cap is not None:
+                if self.cap is not None and self.cap.isOpened():
                     ret_wc, wc_frame = self.cap.read()
                     if ret_wc and wc_frame is not None:
                         webcam_frame = wc_frame
@@ -485,7 +491,7 @@ class EdgePipeline:
                     self.load_yolo_model(self.target_model)
                     
                     if webcam_frame is not None:
-                        # Run real YOLOv8 inference on webcam frame!
+                        # Run real YOLOv8 inference on camera frame!
                         # Detect person (0), car (2), motorcycle (3), bus (5), truck (7)
                         results = self.yolo_model(
                             webcam_frame,
@@ -520,7 +526,7 @@ class EdgePipeline:
                                 'lon': lon + offset_lon
                             })
                             
-                        # Generate annotated webcam overlay
+                        # Generate annotated camera overlay
                         overlay_img = results[0].plot()
                         # Draw forensic telemetry banner at bottom
                         forensic_bar_h = 36
@@ -528,7 +534,7 @@ class EdgePipeline:
                         canvas[:overlay_img.shape[0], :] = overlay_img
                         canvas[overlay_img.shape[0]:, :] = [12, 18, 32]
                         
-                        label_str = f"WEBCAM MODE | TELEM: {lat:.5f}, {lon:.5f} | {timestamp}"
+                        label_str = f"DRONE CAMERA MODE | TELEM: {lat:.5f}, {lon:.5f} | {timestamp}"
                         cv2.putText(canvas, label_str, (10, overlay_img.shape[0] + 24),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 255), 1, cv2.LINE_AA)
                         
@@ -538,8 +544,9 @@ class EdgePipeline:
                         raw_jpeg = raw_buf.tobytes()
                         overlay_jpeg = overlay_buf.tobytes()
                     else:
-                        # 2. Simulated YOLO Object Detection & GPS Projection (User requirement #2)
-                        raw_detections = self.generate_simulated_detections(lat, lon, step)
+                        # No physical camera feed found, output empty detections
+                        logger.warning(" [Edge Inference] No physical camera frame found. Skipping YOLO inference.")
+                        raw_detections = []
                     
                     # 3. Spatial Aggregation & DBSCAN Clustering
                     incidents = self.cluster_engine.cluster_detections(raw_detections, eps_meters=60.0)
