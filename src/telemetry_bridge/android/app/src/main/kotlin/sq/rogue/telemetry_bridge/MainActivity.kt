@@ -6,12 +6,18 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.SurfaceHolder
+import android.view.SurfaceView
+import android.view.View
 import androidx.annotation.NonNull
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.StandardMessageCodec
+import io.flutter.plugin.platform.PlatformView
+import io.flutter.plugin.platform.PlatformViewFactory
 import java.util.ArrayList
 
 // Correct DJI SDK v5 imports
@@ -71,6 +77,12 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            "sq.rogue.telemetry_bridge/dji_camera_view",
+            DjiCameraViewFactory(this)
+        )
+
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
 
         methodChannel?.setMethodCallHandler { call, result ->
@@ -347,6 +359,59 @@ class MainActivity : FlutterActivity() {
     private fun sendConsoleLog(message: String) {
         handler.post {
             methodChannel?.invokeMethod("onConsoleLog", message)
+        }
+    }
+}
+
+class DjiCameraViewFactory(private val mainActivity: MainActivity) : PlatformViewFactory(StandardMessageCodec.INSTANCE) {
+    override fun create(context: Context, viewId: Int, args: Any?): PlatformView {
+        return DjiCameraView(context, mainActivity)
+    }
+}
+
+class DjiCameraView(context: Context, private val mainActivity: MainActivity) : PlatformView, SurfaceHolder.Callback {
+    private val surfaceView = SurfaceView(context)
+
+    init {
+        surfaceView.holder.addCallback(this)
+    }
+
+    override fun getView(): View {
+        return surfaceView
+    }
+
+    override fun dispose() {
+        try {
+            MediaDataCenter.getInstance().cameraStreamManager.removeCameraStreamSurface(surfaceView.holder.surface)
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        val surface = holder.surface
+        if (surface != null) {
+            try {
+                MediaDataCenter.getInstance().cameraStreamManager.putCameraStreamSurface(
+                    ComponentIndexType.LEFT_OR_MAIN,
+                    surface,
+                    surfaceView.width,
+                    surfaceView.height,
+                    dji.v5.manager.interfaces.ICameraStreamManager.ScaleType.SCALE_FIT
+                )
+            } catch (e: Exception) {
+                mainActivity.sendConsoleLog("[VIDEO ERROR] Failed to bind surface: ${e.message}")
+            }
+        }
+    }
+
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
+
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        try {
+            MediaDataCenter.getInstance().cameraStreamManager.removeCameraStreamSurface(holder.surface)
+        } catch (e: Exception) {
+            // ignore
         }
     }
 }

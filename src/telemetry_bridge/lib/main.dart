@@ -797,6 +797,15 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             ),
             
+            if (_isDJIConnected)
+              const Positioned.fill(
+                child: AndroidView(
+                  viewType: 'sq.rogue.telemetry_bridge/dji_camera_view',
+                  creationParams: <String, dynamic>{},
+                  creationParamsCodec: StandardMessageCodec(),
+                ),
+              ),
+            
             CustomPaint(
               size: Size.infinite,
               painter: _HUDGridPainter(

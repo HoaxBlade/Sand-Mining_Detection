@@ -13,7 +13,8 @@
     <application
         android:label="Drone Telemetry Bridge"
         android:name=".MainApplication"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:extractNativeLibs="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
