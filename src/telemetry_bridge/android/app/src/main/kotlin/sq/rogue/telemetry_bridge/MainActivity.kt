@@ -29,12 +29,20 @@ class MainActivity : FlutterActivity() {
     private val handler = Handler(Looper.getMainLooper())
 
     private val REQUEST_PERMISSION_CODE = 12345
-    private val REQUIRED_PERMISSION_LIST = arrayOf(
-        Manifest.permission.WRITE_EXTERNAL_STORAGE,
-        Manifest.permission.READ_PHONE_STATE,
-        Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION
-    )
+    private val REQUIRED_PERMISSION_LIST: Array<String>
+        get() {
+            val list = arrayListOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.READ_PHONE_STATE
+            )
+            // On Android 13 (API 33) and above, WRITE_EXTERNAL_STORAGE is deprecated and will auto-fail.
+            // Scoped storage is used instead.
+            if (android.os.Build.VERSION.SDK_INT < 33) {
+                list.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+            return list.toTypedArray()
+        }
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -140,7 +148,11 @@ class MainActivity : FlutterActivity() {
             }
 
             override fun onProductChanged(product: BaseProduct?) {
-                sendConsoleLog("[DJI] Drone product changed.")
+                sendConsoleLog("[DJI] Drone product changed: ${product?.model?.displayName}")
+                handler.post {
+                    methodChannel?.invokeMethod("onDJIConnectionUpdate", product != null)
+                }
+                setupTelemetryListeners(product)
             }
 
             override fun onComponentChange(key: BaseProduct.ComponentKey?, oldComponent: dji.sdk.base.BaseComponent?, newComponent: dji.sdk.base.BaseComponent?) {
