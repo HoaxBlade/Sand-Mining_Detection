@@ -2518,7 +2518,11 @@ def get_login_page(request: Request):
     login_path = Path(__file__).resolve().parent / "frontend" / "login.html"
     if login_path.exists():
         with open(login_path, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
+            response = HTMLResponse(content=f.read())
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, private"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            return response
     return HTMLResponse(content="<h1>Login Page Not Found</h1>", status_code=404)
 
 # HTML Server
@@ -2532,7 +2536,11 @@ def get_dashboard_page(request: Request):
     dashboard_path = Path(__file__).resolve().parent / "frontend" / "index.html"
     if dashboard_path.exists():
         with open(dashboard_path, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
+            response = HTMLResponse(content=f.read())
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, private"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            return response
     else:
         # Fallback basic response if html is missing during initial boot
         return HTMLResponse(content="<h1>Dashboard Page Loading...</h1><p>Please implement frontend/index.html first.</p>")
