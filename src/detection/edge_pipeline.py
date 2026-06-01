@@ -179,16 +179,21 @@ class EdgePipeline:
         # Physical Camera / Wireless Stream Support
         # Check environment variable first; if empty, interactive prompt in terminal
         self.camera_source = os.getenv("CAMERA_SOURCE", "").strip()
-        if not self.camera_source:
+        
+        # Check if we are running in an interactive terminal session
+        import sys
+        if sys.stdin.isatty():
             print("\n" + "=" * 60)
             print("BRAHMAPUTRA SURVEILLANCE EDGE COMPUTE STARTUP")
             print("=" * 60)
-            user_input = input("Enter Drone RTMP/RTSP Link: ").strip()
+            default_val = self.camera_source if self.camera_source else "0"
+            user_input = input(f"Enter Drone RTMP/RTSP Link (or press Enter for default '{default_val}'): ").strip()
             print("=" * 60 + "\n")
             if user_input:
                 self.camera_source = user_input
-            else:
-                self.camera_source = "0"
+        # Fallback to default if still empty
+        if not self.camera_source:
+            self.camera_source = "0"
 
         is_network_stream = False
         if str(self.camera_source).isdigit():
