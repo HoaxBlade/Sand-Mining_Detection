@@ -501,9 +501,20 @@ def _yolo_inference_loop():
                 current_loaded_model_path = target_path
 
         frame = None
-        with frame_lock:
-            if latest_bgr_frame is not None:
-                frame = latest_bgr_frame.copy()
+        # Grab from raw bytes buffer if available (decoupled edge/webcam source)
+        raw_bytes = latest_raw_frame
+        if raw_bytes:
+            try:
+                nparr = np.frombuffer(raw_bytes, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            except Exception as e:
+                logger.debug("YOLO thread frame decode error: {}".format(e))
+
+        # Fallback to local thread-safe latest_bgr_frame if needed
+        if frame is None:
+            with frame_lock:
+                if latest_bgr_frame is not None:
+                    frame = latest_bgr_frame.copy()
 
         if frame is None:
             continue
@@ -1485,7 +1496,7 @@ async def stream_overlay(request: Request, drone_id: Optional[str] = Query(None)
 @app.post("/api/edge/frame")
 async def receive_edge_frame(stream_type: str, request: Request, drone_id: Optional[str] = Query(None)):
     """Receives compressed JPEG frames uploaded by the Edge Jetson Nano or local Webcam pipeline."""
-    global latest_raw_frame, latest_overlay_frame, latest_webcam_detections, local_webcam_mode, last_webcam_frame_time, latest_bgr_frame
+    global latest_raw_frame, latest_overlay_frame, local_webcam_mode, last_webcam_frame_time
     frame_data = await request.body()
     if not frame_data:
         return {"status": "ok"}
@@ -1497,47 +1508,19 @@ async def receive_edge_frame(stream_type: str, request: Request, drone_id: Optio
         target_drone["last_frame_time"] = time.time()
         target_drone["local_webcam_mode"] = True
 
-    # Browser is streaming frames to us! Activate local webcam mode so recording / detection pipelines fall back to this stream
+    # Activate local webcam mode so recording / detection pipelines fall back to this stream
     local_webcam_mode = True
     last_webcam_frame_time = time.time()
 
     if stream_type == "raw":
-        # Decode and process browser webcam frame
-        try:
-            import cv2
-            import numpy as np
-            nparr = np.frombuffer(frame_data, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if frame is not None:
-                # Flip the frame horizontally to correct webcam mirroring
-                frame = cv2.flip(frame, 1)
-                
-                # OPTIMIZATION: Downscale raw frame for low-latency web streaming, but keep 'frame' high-resolution for YOLO
-                h, w = frame.shape[:2]
-                if w > 854 or h > 480:
-                    stream_frame = cv2.resize(frame, (854, 480))
-                else:
-                    stream_frame = frame
-                
-                # Re-encode flipped frame to update the raw stream
-                _, raw_buf = cv2.imencode(".jpg", stream_frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
-                jpeg_bytes = raw_buf.tobytes()
+        latest_raw_frame = frame_data
+        notify_raw_frame()
 
-                # Legacy fallback
-                latest_raw_frame = jpeg_bytes
-                notify_raw_frame()
-
-                if target_drone:
-                    target_drone["latest_raw_frame"] = jpeg_bytes
-                    notify_drone_frame(drone_id, "raw")
-                
-                with frame_lock:
-                    latest_bgr_frame = frame.copy()
-        except Exception as exc:
-            logger.debug("VPS received-frame decode error: {}".format(exc))
+        if target_drone:
+            target_drone["latest_raw_frame"] = frame_data
+            notify_drone_frame(drone_id, "raw")
             
     elif stream_type == "overlay":
-        # Legacy fallback
         latest_overlay_frame = frame_data
         notify_overlay_frame()
 

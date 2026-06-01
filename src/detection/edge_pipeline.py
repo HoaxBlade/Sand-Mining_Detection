@@ -11,7 +11,7 @@ import requests
 from datetime import datetime
 from pathlib import Path
 import logging
-from threading import Thread
+from threading import Thread, Lock
 from typing import List, Dict, Any, Tuple
 
 # Configure logging
@@ -85,6 +85,43 @@ class SpatialTemporalDeduplicator:
         return False
 
 
+class FreshFrameGrabber:
+    """
+    A lightweight, dedicated thread that continuously drains OpenCV's internal
+    buffer queue for live wireless RTMP/RTSP drone streams, ensuring we always serve
+    the absolute freshest real-time frame with zero latency.
+    """
+    def __init__(self, cap):
+        self.cap = cap
+        self.latest_frame = None
+        self.ret = False
+        self.running = True
+        self.lock = Lock()
+        self.thread = Thread(target=self._grab_loop, daemon=True, name="rtmp-grabber")
+        self.thread.start()
+
+    def _grab_loop(self):
+        while self.running:
+            ret, frame = self.cap.read()
+            if not ret:
+                time.sleep(0.01)
+                continue
+            with self.lock:
+                self.latest_frame = frame
+                self.ret = ret
+
+    def read(self):
+        with self.lock:
+            return self.ret, self.latest_frame
+
+    def release(self):
+        self.running = False
+        try:
+            self.cap.release()
+        except Exception:
+            pass
+
+
 class EdgePipeline:
     """
     Simulates the entire Jetson Nano Edge compute flow running on the drone:
@@ -111,7 +148,10 @@ class EdgePipeline:
         self.running = False
         self.drone_id = os.getenv("DRONE_ID", "dji_jetson_nano_01")
         self.frame_w, self.frame_h = 1280, 720  # Set resolution to 1280x720 to reduce overhead
-        self.upload_queue = queue.Queue(maxsize=10)
+        
+        # High-performance decoupled queues to eliminate latency lag
+        self.frame_queue = queue.Queue(maxsize=2)       # Low-priority video frames: drop oldest if full
+        self.telemetry_queue = queue.Queue()             # High-priority telemetry/sync: never drop
 
         # Offline-first sync worker  starts as daemon, retries with backoff
         self.sync_worker = SyncWorker(
@@ -136,46 +176,70 @@ class EdgePipeline:
         self.dynamic_path_generated = False
         self.current_flight_idx = 0
 
-        # Physical Camera Support (Always initialized for real drone/camera testing)
+        # Physical Camera / Wireless Stream Support
         self.camera_source = os.getenv("CAMERA_SOURCE", "0")
+        is_network_stream = False
         if self.camera_source.isdigit():
             self.camera_source = int(self.camera_source)
+        else:
+            is_network_stream = self.camera_source.startswith("rtsp://") or self.camera_source.startswith("rtmp://") or self.camera_source.startswith("http://") or self.camera_source.startswith("https://")
             
-        logger.info(f"Connecting to physical camera source: {self.camera_source}...")
+        logger.info(f"Connecting to camera source: {self.camera_source}...")
         self.cap = cv2.VideoCapture(self.camera_source)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        self.grabber = None
         
         if self.cap.isOpened():
+            if is_network_stream:
+                logger.info(f" [Camera Engine] Initializing low-latency async grabber for wireless stream: '{self.camera_source}'")
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                self.grabber = FreshFrameGrabber(self.cap)
+            else:
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
             logger.info(f" [Camera Engine] Bound camera source '{self.camera_source}' successfully!")
         else:
             logger.error(f" [Camera Engine] Failed to open camera source '{self.camera_source}'!")
 
     def queue_post(self, request_type, url, data=None, json_data=None):
-        if self.upload_queue.full():
-            try:
-                self.upload_queue.get_nowait()
-            except queue.Empty:
-                pass
-        self.upload_queue.put((request_type, url, data, json_data))
+        if request_type == "post_raw":
+            # Video frames: drop oldest if full to maintain zero latency
+            if self.frame_queue.full():
+                try:
+                    self.frame_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            self.frame_queue.put((request_type, url, data, json_data))
+        else:
+            # Telemetry/sync: never drop critical metadata
+            self.telemetry_queue.put((request_type, url, data, json_data))
 
     def uploader_worker(self):
         session = requests.Session()
-        while self.running or not self.upload_queue.empty():
+        while self.running or not self.frame_queue.empty() or not self.telemetry_queue.empty():
+            item = None
+            # Process high-priority telemetry/sync first
             try:
-                item = self.upload_queue.get(timeout=0.1)
+                item = self.telemetry_queue.get_nowait()
             except queue.Empty:
-                continue
+                # Fallback to low-priority video frames
+                try:
+                    item = self.frame_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+
             request_type, url, data, json_data = item
             try:
                 if request_type == "post_raw":
-                    session.post(url, data=data, headers={"Content-Type": "image/jpeg"}, timeout=0.1)
+                    session.post(url, data=data, headers={"Content-Type": "image/jpeg"}, timeout=1.0)
                 elif request_type == "post_json":
-                    session.post(url, json=json_data, timeout=0.1)
+                    session.post(url, json=json_data, timeout=2.0)
             except Exception:
                 pass
             finally:
-                self.upload_queue.task_done()
+                if request_type == "post_raw":
+                    self.frame_queue.task_done()
+                else:
+                    self.telemetry_queue.task_done()
         session.close()
 
     def load_yolo_model(self, model_name):
@@ -471,7 +535,11 @@ class EdgePipeline:
 
                 # Try to grab real camera frame
                 webcam_frame = None
-                if self.cap is not None and self.cap.isOpened():
+                if self.grabber is not None:
+                    ret_wc, wc_frame = self.grabber.read()
+                    if ret_wc and wc_frame is not None:
+                        webcam_frame = wc_frame
+                elif self.cap is not None and self.cap.isOpened():
                     ret_wc, wc_frame = self.cap.read()
                     if ret_wc and wc_frame is not None:
                         webcam_frame = wc_frame
@@ -668,7 +736,9 @@ class EdgePipeline:
         finally:
             cursor.close()
             conn.close()
-            if self.cap is not None:
+            if self.grabber is not None:
+                self.grabber.release()
+            elif self.cap is not None:
                 self.cap.release()
             self.running = False
             logger.info("Edge Pipeline shut down successfully.")
