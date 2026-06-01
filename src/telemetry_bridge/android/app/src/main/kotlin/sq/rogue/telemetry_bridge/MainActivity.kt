@@ -27,6 +27,8 @@ class MainActivity : FlutterActivity() {
     private val CHANNEL = "sq.rogue.telemetry_bridge/dji"
     private var methodChannel: MethodChannel? = null
     private val handler = Handler(Looper.getMainLooper())
+    private var telemetryBound = false
+    private var batteryBound = false
 
     private val REQUEST_PERMISSION_CODE = 12345
     private val REQUIRED_PERMISSION_LIST: Array<String>
