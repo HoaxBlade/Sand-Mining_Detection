@@ -279,9 +279,20 @@ def _video_capture_loop():
 
                     if is_rtsp:
                         # Build low-latency FFMPEG options: disable buffering, reduce probe size/duration
-                        opts = f"rtsp_transport;{RTSP_TRANSPORT}|fflags;nobuffer|flags;low_delay|probesize;32|analyzeduration;0"
+                        opt_list = []
+                        if target_source.startswith("rtsp://"):
+                            opt_list.append(f"rtsp_transport;{RTSP_TRANSPORT}")
+                        
+                        # Add socket timeout (3 seconds = 3000000 microseconds) to prevent blocking hangs
+                        opt_list.append("stimeout;3000000")
+                        opt_list.append("fflags;nobuffer")
+                        opt_list.append("flags;low_delay")
+                        opt_list.append("probesize;32")
+                        opt_list.append("analyzeduration;0")
+                        
+                        opts = "|".join(opt_list)
                         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = opts
-                        logger.info("  Connecting to dynamic drone stream: {} (transport={} with low-delay)".format(target_source, RTSP_TRANSPORT))
+                        logger.info("  Connecting to dynamic drone stream: {} (options: {})".format(target_source, opts))
                         cap = cv2.VideoCapture(target_source, cv2.CAP_FFMPEG)
                         if cap is not None and cap.isOpened():
                             # Set internal buffer size to 1 to prevent frame queuing lag
@@ -392,7 +403,7 @@ def _video_capture_loop():
 
         consecutive_drops = 0
 
-        if not use_synthetic_video:
+        if not use_synthetic_video and not is_rtsp and not is_file:
             # Flip the frame horizontally to correct webcam mirroring
             frame = cv2.flip(frame, 1)
 
