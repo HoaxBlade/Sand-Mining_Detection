@@ -356,7 +356,7 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun sendConsoleLog(message: String) {
+    fun sendConsoleLog(message: String) {
         handler.post {
             methodChannel?.invokeMethod("onConsoleLog", message)
         }
@@ -397,7 +397,7 @@ class DjiCameraView(context: Context, private val mainActivity: MainActivity) : 
                     surface,
                     surfaceView.width,
                     surfaceView.height,
-                    dji.v5.manager.interfaces.ICameraStreamManager.ScaleType.SCALE_FIT
+                    dji.v5.manager.interfaces.ICameraStreamManager.ScaleType.CENTER_INSIDE
                 )
             } catch (e: Exception) {
                 mainActivity.sendConsoleLog("[VIDEO ERROR] Failed to bind surface: ${e.message}")
