@@ -1996,10 +1996,18 @@
                 }
             };
 
-            ws.onclose = () => {
+            ws.onclose = (event) => {
                 const statusSpan = document.getElementById('connection-status');
                 statusSpan.style.color = '#ef4444';
                 statusSpan.innerHTML = `<span class="dot dot-red"></span> Offline`;
+
+                // If closed with policy violation (1008), it means our session is invalid!
+                if (event && event.code === 1008) {
+                    console.warn('[WS] Session is invalid, clearing and redirecting to login...');
+                    localStorage.removeItem('session_id');
+                    window.location.href = ORIGINAL_SUBPATH + 'login';
+                    return;
+                }
                 setTimeout(connectWebSocket, 3000);
             };
         }
