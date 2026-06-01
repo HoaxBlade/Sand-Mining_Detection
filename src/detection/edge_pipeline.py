@@ -177,12 +177,24 @@ class EdgePipeline:
         self.current_flight_idx = 0
 
         # Physical Camera / Wireless Stream Support
-        self.camera_source = os.getenv("CAMERA_SOURCE", "0")
+        # Check environment variable first; if empty, interactive prompt in terminal
+        self.camera_source = os.getenv("CAMERA_SOURCE", "").strip()
+        if not self.camera_source:
+            print("\n" + "=" * 60)
+            print("BRAHMAPUTRA SURVEILLANCE EDGE COMPUTE STARTUP")
+            print("=" * 60)
+            user_input = input("Enter Drone RTMP/RTSP Link: ").strip()
+            print("=" * 60 + "\n")
+            if user_input:
+                self.camera_source = user_input
+            else:
+                self.camera_source = "0"
+
         is_network_stream = False
-        if self.camera_source.isdigit():
+        if str(self.camera_source).isdigit():
             self.camera_source = int(self.camera_source)
         else:
-            is_network_stream = self.camera_source.startswith("rtsp://") or self.camera_source.startswith("rtmp://") or self.camera_source.startswith("http://") or self.camera_source.startswith("https://")
+            is_network_stream = str(self.camera_source).startswith("rtsp://") or str(self.camera_source).startswith("rtmp://") or str(self.camera_source).startswith("http://") or str(self.camera_source).startswith("https://")
             
         logger.info(f"Connecting to camera source: {self.camera_source}...")
         self.cap = cv2.VideoCapture(self.camera_source)
