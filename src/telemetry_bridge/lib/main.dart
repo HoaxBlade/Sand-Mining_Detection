@@ -54,6 +54,11 @@ class _DashboardPageState extends State<DashboardPage> {
   double _speed = -1.0;
   int _battery = -1;
 
+  // RTMP Streaming variables
+  bool _isRtmpStreaming = false;
+  String _rtmpStatus = 'IDLE';
+  final TextEditingController _rtmpController = TextEditingController();
+
   // Simulator helper variables
   double _simAngle = 0.0;
   Timer? _timer;
@@ -134,6 +139,20 @@ class _DashboardPageState extends State<DashboardPage> {
           });
         }
         break;
+      case 'onRTMPStatusUpdate':
+        final Map data = call.arguments as Map;
+        setState(() {
+          _rtmpStatus = data['status'] as String;
+          if (_rtmpStatus == 'STREAMING') {
+            _isRtmpStreaming = true;
+          } else if (_rtmpStatus == 'IDLE') {
+            _isRtmpStreaming = false;
+          } else if (_rtmpStatus == 'FAILED') {
+            _isRtmpStreaming = false;
+            _addLog('[RTMP ERROR] Broadcast failed: ${data['error']}');
+          }
+        });
+        break;
     }
   }
 
@@ -141,6 +160,7 @@ class _DashboardPageState extends State<DashboardPage> {
   void dispose() {
     _timer?.cancel();
     _scrollController.dispose();
+    _rtmpController.dispose();
     super.dispose();
   }
 
@@ -310,9 +330,11 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // Control switches panel
+      body: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        child: Column(
+          children: [
+                  // Control switches panel
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             color: const Color(0xFF0F172A),
@@ -371,6 +393,155 @@ class _DashboardPageState extends State<DashboardPage> {
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   ),
                 ),
+                const SizedBox(height: 8),
+                Card(
+                  margin: EdgeInsets.zero,
+                  color: const Color(0xFF1E293B),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Expanded(
+                              child: Row(
+                                children: [
+                                  Icon(Icons.live_tv, color: Color(0xFF38BDF8), size: 18),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'RTMP Live Stream Broadcaster',
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: _isRtmpStreaming 
+                                    ? const Color(0xFF10B981).withOpacity(0.15) 
+                                    : Colors.grey.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                _isRtmpStreaming ? 'LIVE' : 'STANDBY',
+                                style: TextStyle(
+                                  color: _isRtmpStreaming ? const Color(0xFF10B981) : Colors.grey,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Configure target RTMP publishing URL to stream the Mini 4 Pro camera feed live.',
+                          style: TextStyle(fontSize: 11, color: Colors.grey),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: SizedBox(
+                                height: 42,
+                                child: TextField(
+                                  controller: _rtmpController,
+                                  enabled: !_isRtmpStreaming,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.white,
+                                    fontFamily: 'monospace',
+                                  ),
+                                  decoration: InputDecoration(
+                                    hintText: 'rtmp://server/live/stream',
+                                    hintStyle: const TextStyle(color: Colors.grey, fontSize: 12),
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    filled: true,
+                                    fillColor: const Color(0xFF0F172A),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: const BorderSide(color: Color(0xFF334155)),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: const BorderSide(color: Color(0xFF38BDF8)),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              height: 42,
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _isRtmpStreaming 
+                                      ? const Color(0xFFEF4444) 
+                                      : const Color(0xFF10B981),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                                ),
+                                icon: Icon(
+                                  _isRtmpStreaming ? Icons.portable_wifi_off : Icons.wifi_tethering,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
+                                label: Text(
+                                  _isRtmpStreaming ? 'STOP' : 'START',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                onPressed: () {
+                                  if (_isRtmpStreaming) {
+                                    _platform.invokeMethod('stopRTMPStream').then((val) {
+                                      _addLog('[RTMP] Requested stop stream.');
+                                    }).catchError((e) {
+                                      _addLog('[RTMP ERROR] Stop stream failed: $e');
+                                    });
+                                  } else {
+                                    var url = _rtmpController.text.trim();
+                                    if (url.isEmpty) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Please enter a valid stream URL!'),
+                                          backgroundColor: Color(0xFFEF4444),
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    if (!url.startsWith('rtmp://') && !url.startsWith('rtmps://')) {
+                                      url = 'rtmp://$url';
+                                    }
+                                    _platform.invokeMethod('startRTMPStream', {'url': url}).then((val) {
+                                      _addLog('[RTMP] Requested start stream to: $url');
+                                    }).catchError((e) {
+                                      _addLog('[RTMP ERROR] Start stream failed: $e');
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -420,12 +591,14 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
           ),
 
-          const SizedBox(height: 16),
+          _buildRawFeedMonitor(),
+
+          const SizedBox(height: 8),
 
           // Interactive terminal console
-          Expanded(
-            child: Container(
-              margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          Container(
+            height: 140,
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: const Color(0xFF070A13),
@@ -525,8 +698,8 @@ class _DashboardPageState extends State<DashboardPage> {
                 ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -577,5 +750,266 @@ class _DashboardPageState extends State<DashboardPage> {
         ],
       ),
     );
+  }
+
+  Widget _buildRawFeedMonitor() {
+    final double currentLat = _lat;
+    final double currentLon = _lon;
+    final double currentAlt = _altitude;
+    final double currentSpeed = _speed;
+    final int currentBat = _battery;
+
+    final double horizonOffset = _isSimulating 
+        ? 15.0 * math.sin(_simAngle * 2.0) 
+        : (_isRtmpStreaming ? 5.0 * math.sin(DateTime.now().millisecond / 100.0) : 0.0);
+    final double rollAngle = _isSimulating 
+        ? 0.1 * math.cos(_simAngle) 
+        : (_isRtmpStreaming ? 0.03 * math.cos(DateTime.now().millisecond / 200.0) : 0.0);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      height: 180,
+      decoration: BoxDecoration(
+        color: const Color(0xFF030712),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _isRtmpStreaming ? const Color(0xFF10B981) : const Color(0xFF334155),
+          width: 1.5,
+        ),
+        boxShadow: _isRtmpStreaming ? [
+          BoxShadow(
+            color: const Color(0xFF10B981).withOpacity(0.15),
+            blurRadius: 10,
+            spreadRadius: 2,
+          )
+        ] : [],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Opacity(
+                opacity: 0.1,
+                child: Container(
+                  color: const Color(0xFF0F172A),
+                ),
+              ),
+            ),
+            
+            CustomPaint(
+              size: Size.infinite,
+              painter: _HUDGridPainter(
+                horizonOffset: horizonOffset, 
+                rollAngle: rollAngle, 
+                isActive: _isRtmpStreaming || _isSimulating
+              ),
+            ),
+
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: List.generate(45, (index) => 
+                        index % 2 == 0 ? Colors.transparent : Colors.black.withOpacity(0.15)
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            if (!_isRtmpStreaming && !_isSimulating)
+              Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.videocam_off, 
+                      color: Colors.amber.withOpacity(0.6), 
+                      size: 32,
+                      shadows: [
+                        Shadow(color: Colors.amber.withOpacity(0.3), blurRadius: 8)
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'RAW VIDEO FEED STANDBY',
+                      style: TextStyle(
+                        color: Colors.amber.withOpacity(0.8),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'monospace',
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'CONNECT DRONE & START RTMP TO BROADCAST',
+                      style: TextStyle(
+                        color: Colors.grey.withOpacity(0.8),
+                        fontSize: 9,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+            if (_isRtmpStreaming || _isSimulating) ...[
+              Positioned(
+                top: 8,
+                left: 12,
+                child: Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFEF4444),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _isRtmpStreaming ? 'LIVE // BROADCASTING' : 'SIMULATOR // ACTIVE',
+                      style: const TextStyle(
+                        color: Color(0xFFEF4444),
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                top: 8,
+                right: 12,
+                child: Text(
+                  '1080P HD @ 60FPS\nBITRATE: ${(4.5 + 0.3 * math.sin(DateTime.now().second.toDouble())).toStringAsFixed(1)} MBPS',
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    color: Color(0xFF38BDF8),
+                    fontSize: 8,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+
+              Center(
+                child: Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: const Color(0xFF38BDF8).withOpacity(0.3),
+                      width: 1,
+                    ),
+                  ),
+                ),
+              ),
+
+              Positioned(
+                bottom: 8,
+                left: 12,
+                right: 12,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'GPS: ${currentLat == 0.0 ? "ACQUIRING..." : "${currentLat.toStringAsFixed(5)}, ${currentLon.toStringAsFixed(5)}"}\nALT: ${currentAlt == -1.0 ? "0.0" : currentAlt.toStringAsFixed(1)} M',
+                      style: TextStyle(
+                        color: const Color(0xFF10B981).withOpacity(0.8),
+                        fontSize: 9,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      'BAT: ${currentBat == -1 ? "100" : currentBat}%\nSPD: ${currentSpeed == -1.0 ? "0.0" : currentSpeed.toStringAsFixed(1)} KM/H',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        color: const Color(0xFF10B981).withOpacity(0.8),
+                        fontSize: 9,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HUDGridPainter extends CustomPainter {
+  final double horizonOffset;
+  final double rollAngle;
+  final bool isActive;
+
+  _HUDGridPainter({required this.horizonOffset, required this.rollAngle, required this.isActive});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = isActive ? const Color(0xFF38BDF8).withOpacity(0.15) : const Color(0xFF334155).withOpacity(0.1)
+      ..strokeWidth = 1.0
+      ..style = PaintingStyle.stroke;
+
+    final center = Offset(size.width / 2, size.height / 2);
+
+    for (int i = 1; i < 5; i++) {
+      final y = size.height * i / 5;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    }
+    for (int i = 1; i < 5; i++) {
+      final x = size.width * i / 5;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+
+    if (isActive) {
+      final hudPaint = Paint()
+        ..color = const Color(0xFF10B981).withOpacity(0.4)
+        ..strokeWidth = 1.5
+        ..style = PaintingStyle.stroke;
+
+      canvas.save();
+      canvas.translate(center.dx, center.dy);
+      canvas.rotate(rollAngle);
+      canvas.translate(0, horizonOffset);
+
+      canvas.drawLine(const Offset(-40, 0), const Offset(-10, 0), hudPaint);
+      canvas.drawLine(const Offset(10, 0), const Offset(40, 0), hudPaint);
+      canvas.drawCircle(Offset.zero, 3, hudPaint..style = PaintingStyle.fill);
+
+      canvas.drawLine(const Offset(-20, -20), const Offset(-10, -20), hudPaint..style = PaintingStyle.stroke);
+      canvas.drawLine(const Offset(-20, -20), const Offset(-20, -15), hudPaint);
+      canvas.drawLine(const Offset(20, -20), const Offset(10, -20), hudPaint);
+      canvas.drawLine(const Offset(20, -20), const Offset(20, -15), hudPaint);
+
+      canvas.drawLine(const Offset(-20, 20), const Offset(-10, 20), hudPaint);
+      canvas.drawLine(const Offset(-20, 20), const Offset(-20, 15), hudPaint);
+      canvas.drawLine(const Offset(20, 20), const Offset(10, 20), hudPaint);
+      canvas.drawLine(const Offset(20, 20), const Offset(20, 15), hudPaint);
+
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _HUDGridPainter oldDelegate) {
+    return oldDelegate.horizonOffset != horizonOffset || 
+           oldDelegate.rollAngle != rollAngle || 
+           oldDelegate.isActive != isActive;
   }
 }

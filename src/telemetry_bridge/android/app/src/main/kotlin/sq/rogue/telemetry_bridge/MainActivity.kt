@@ -27,6 +27,15 @@ import dji.sdk.keyvalue.value.common.LocationCoordinate3D
 import dji.sdk.keyvalue.value.common.Velocity3D
 import dji.v5.common.callback.CommonCallbacks.KeyListener
 
+// DJI V5 RTMP Live Stream imports
+import dji.v5.manager.datacenter.MediaDataCenter
+import dji.v5.manager.interfaces.ILiveStreamManager
+import dji.v5.manager.datacenter.livestream.LiveStreamSettings
+import dji.v5.manager.datacenter.livestream.LiveStreamType
+import dji.v5.manager.datacenter.livestream.settings.RtmpSettings
+import dji.v5.common.callback.CommonCallbacks
+import dji.sdk.keyvalue.value.common.ComponentIndexType
+
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "sq.rogue.telemetry_bridge/dji"
     private var methodChannel: MethodChannel? = null
@@ -73,6 +82,19 @@ class MainActivity : FlutterActivity() {
                 "getSDKStatus" -> {
                     val registered = SDKManager.getInstance().isRegistered
                     result.success(registered)
+                }
+                "startRTMPStream" -> {
+                    val url = call.argument<String>("url")
+                    if (url != null) {
+                        startRTMPStream(url)
+                        result.success("RTMP streaming requested.")
+                    } else {
+                        result.error("INVALID_ARGUMENT", "RTMP URL is missing", null)
+                    }
+                }
+                "stopRTMPStream" -> {
+                    stopRTMPStream()
+                    result.success("RTMP stopping requested.")
                 }
                 else -> {
                     result.notImplemented()
@@ -236,6 +258,77 @@ class MainActivity : FlutterActivity() {
                 }
             })
             isVelocityListening = true
+        }
+    }
+
+    private fun startRTMPStream(url: String) {
+        if (!SDKManager.getInstance().isRegistered) {
+            sendConsoleLog("[RTMP ERROR] DJI SDK is not registered yet.")
+            return
+        }
+        try {
+            var formattedUrl = url.trim()
+            if (!formattedUrl.startsWith("rtmp://", ignoreCase = true) && !formattedUrl.startsWith("rtmps://", ignoreCase = true)) {
+                formattedUrl = "rtmp://" + formattedUrl
+            }
+            sendConsoleLog("[RTMP] Configuring stream settings for: $formattedUrl")
+            val liveStreamManager = MediaDataCenter.getInstance().liveStreamManager
+            val rtmpSettings = RtmpSettings.Builder().setUrl(formattedUrl).build()
+            val settings = LiveStreamSettings.Builder()
+                .setLiveStreamType(LiveStreamType.RTMP)
+                .setRtmpSettings(rtmpSettings)
+                .build()
+
+            liveStreamManager.setLiveStreamSettings(settings)
+            liveStreamManager.setCameraIndex(ComponentIndexType.LEFT_OR_MAIN)
+
+            sendConsoleLog("[RTMP] Starting RTMP stream...")
+            liveStreamManager.startStream(object : CommonCallbacks.CompletionCallback {
+                override fun onSuccess() {
+                    sendConsoleLog("[RTMP] Stream started successfully to: $url")
+                    handler.post {
+                        methodChannel?.invokeMethod("onRTMPStatusUpdate", mapOf(
+                            "status" to "STREAMING",
+                            "url" to url
+                        ))
+                    }
+                }
+
+                override fun onFailure(error: IDJIError) {
+                    sendConsoleLog("[RTMP ERROR] Failed to start stream: ${error.description()}")
+                    handler.post {
+                        methodChannel?.invokeMethod("onRTMPStatusUpdate", mapOf(
+                            "status" to "FAILED",
+                            "error" to error.description()
+                        ))
+                    }
+                }
+            })
+        } catch (e: Exception) {
+            sendConsoleLog("[RTMP ERROR] Stream exception: ${e.message}")
+        }
+    }
+
+    private fun stopRTMPStream() {
+        try {
+            sendConsoleLog("[RTMP] Stopping stream...")
+            val liveStreamManager = MediaDataCenter.getInstance().liveStreamManager
+            liveStreamManager.stopStream(object : CommonCallbacks.CompletionCallback {
+                override fun onSuccess() {
+                    sendConsoleLog("[RTMP] Stream stopped successfully.")
+                    handler.post {
+                        methodChannel?.invokeMethod("onRTMPStatusUpdate", mapOf(
+                            "status" to "IDLE"
+                        ))
+                    }
+                }
+
+                override fun onFailure(error: IDJIError) {
+                    sendConsoleLog("[RTMP ERROR] Failed to stop stream: ${error.description()}")
+                }
+            })
+        } catch (e: Exception) {
+            sendConsoleLog("[RTMP ERROR] Stop exception: ${e.message}")
         }
     }
 
