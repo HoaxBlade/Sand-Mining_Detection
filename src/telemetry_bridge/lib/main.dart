@@ -10,7 +10,7 @@ void main() {
 }
 
 class TelemetryBridgeApp extends StatelessWidget {
-  const TelemetryBridgeApp({Key? key}) : super(key: key);
+  const TelemetryBridgeApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -23,7 +23,6 @@ class TelemetryBridgeApp extends StatelessWidget {
           primary: Color(0xFF38BDF8), // Neon blue
           secondary: Color(0xFF10B981), // Glowing green
           surface: Color(0xFF1E293B),
-          background: Color(0xFF0B0F19),
         ),
       ),
       home: const DashboardPage(),
@@ -32,7 +31,7 @@ class TelemetryBridgeApp extends StatelessWidget {
 }
 
 class DashboardPage extends StatefulWidget {
-  const DashboardPage({Key? key}) : super(key: key);
+  const DashboardPage({super.key});
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();
@@ -46,7 +45,7 @@ class _DashboardPageState extends State<DashboardPage> {
   bool _isBroadcasting = false;
   bool _isSimulating = false; // Default simulator to OFF on boot
   bool _isDJIConnected = false;
-  String _serverUrl = 'https://sandmining.nielitbhubaneswar.in/api/edge/sync';
+  final String _serverUrl = 'https://sandmining.nielitbhubaneswar.in/api/edge/sync';
 
   // Telemetry variables (boot state: waiting/unacquired)
   double _lat = 0.0;
@@ -261,6 +260,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
+                    // ignore: deprecated_member_use
                     color: statusColor.withOpacity(0.5),
                     blurRadius: 8,
                     spreadRadius: 2,
@@ -350,7 +350,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       });
                       _addLog('Telemetry simulator ${val ? "ENABLED" : "DISABLED"}');
                     },
-                    activeColor: const Color(0xFF38BDF8),
+                    activeThumbColor: const Color(0xFF38BDF8),
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   ),
                 ),
@@ -367,7 +367,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       setState(() => _isBroadcasting = val);
                       _addLog('Cloud telemetry broadcast ${val ? "ACTIVATED" : "DEACTIVATED"}');
                     },
-                    activeColor: const Color(0xFF10B981),
+                    activeThumbColor: const Color(0xFF10B981),
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   ),
                 ),
@@ -448,6 +448,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               'PILOT CONSOLE',
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
+                                // ignore: deprecated_member_use
                                 color: const Color(0xFF38BDF8).withOpacity(0.8),
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
@@ -536,6 +537,7 @@ class _DashboardPageState extends State<DashboardPage> {
       decoration: BoxDecoration(
         color: const Color(0xFF1E293B),
         borderRadius: BorderRadius.circular(8),
+        // ignore: deprecated_member_use
         border: Border.all(color: color.withOpacity(0.2), width: 1),
       ),
       child: Column(
@@ -565,6 +567,7 @@ class _DashboardPageState extends State<DashboardPage> {
               fontFamily: 'monospace',
               shadows: [
                 Shadow(
+                  // ignore: deprecated_member_use
                   color: color.withOpacity(0.3),
                   blurRadius: 4,
                 )
