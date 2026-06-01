@@ -185,10 +185,15 @@ class EdgePipeline:
         print("BRAHMAPUTRA SURVEILLANCE EDGE COMPUTE STARTUP")
         print("=" * 60)
         default_val = self.camera_source if self.camera_source else "0"
-        user_input = input(f"Enter Drone RTMP/RTSP Link (or press Enter for default '{default_val}'): ").strip()
-        print("=" * 60 + "\n")
-        if user_input:
-            self.camera_source = user_input
+        try:
+            user_input = input(f"Enter Drone RTMP/RTSP Link (or press Enter for default '{default_val}'): ").strip()
+            print("=" * 60 + "\n")
+            if user_input:
+                self.camera_source = user_input
+        except (EOFError, IOError):
+            # Running as a background systemctl service, no stdin attached
+            print("Background service detected. Bypassing terminal prompt.")
+            print("=" * 60 + "\n")
             
         # Fallback to default if still empty
         if not self.camera_source:
