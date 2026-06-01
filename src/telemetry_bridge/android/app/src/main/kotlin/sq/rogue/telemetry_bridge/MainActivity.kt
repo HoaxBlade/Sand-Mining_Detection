@@ -30,7 +30,8 @@ import dji.v5.manager.KeyManager
 import dji.sdk.keyvalue.key.FlightControllerKey
 import dji.sdk.keyvalue.key.BatteryKey
 import dji.sdk.keyvalue.key.CameraKey
-import dji.sdk.keyvalue.value.camera.FocusTargetPoint
+import dji.sdk.keyvalue.value.common.CameraLensType
+import dji.sdk.keyvalue.value.common.DoublePoint2D
 import dji.sdk.keyvalue.value.common.LocationCoordinate3D
 import dji.sdk.keyvalue.value.common.Velocity3D
 import dji.v5.common.callback.CommonCallbacks.KeyListener
@@ -287,11 +288,15 @@ class MainActivity : FlutterActivity() {
 
     private fun tapFocus(normalizedX: Double, normalizedY: Double) {
         try {
-            val focusKey = KeyTools.createKey(CameraKey.KeyCameraFocusTarget)
-            val targetPoint = FocusTargetPoint(normalizedX, normalizedY)
-            KeyManager.getInstance().performAction(focusKey, targetPoint, object : CommonCallbacks.CompletionCallbackWithParam<Boolean> {
-                override fun onSuccess(t: Boolean?) {
-                    sendConsoleLog("[CAMERA] Tap-to-focus success at (${normalizedX.toStringAsFixed(2)}, ${normalizedY.toStringAsFixed(2)})")
+            val focusKey = KeyTools.createCameraKey(
+                CameraKey.KeyCameraFocusTarget,
+                ComponentIndexType.LEFT_OR_MAIN,
+                CameraLensType.CAMERA_LENS_DEFAULT
+            )
+            val point = DoublePoint2D(normalizedX, normalizedY)
+            KeyManager.getInstance().setValue(focusKey, point, object : CommonCallbacks.CompletionCallback {
+                override fun onSuccess() {
+                    sendConsoleLog(String.format("[CAMERA] Tap-to-focus success at (%.2f, %.2f)", normalizedX, normalizedY))
                 }
                 override fun onFailure(error: IDJIError) {
                     sendConsoleLog("[CAMERA] Tap-to-focus failed: ${error.description()}")

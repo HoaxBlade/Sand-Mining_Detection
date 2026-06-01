@@ -99,9 +99,9 @@ class _DashboardPageState extends State<DashboardPage> {
       case 'onSDKStatusUpdate':
         final Map data = call.arguments as Map;
         if (data['status'] == 'REGISTERED') {
-          _addLog('[SDK] DJI Registration status: SUCCESS');
+          _addLog('[SDK] Flight SDK registration status: SUCCESS');
         } else {
-          _addLog('[SDK ERROR] DJI Registration status: FAILED (${data['error']})');
+          _addLog('[SDK ERROR] Flight SDK registration status: FAILED (${data['error']})');
         }
         break;
       case 'onDJIConnectionUpdate':
@@ -122,7 +122,7 @@ class _DashboardPageState extends State<DashboardPage> {
             }
           }
         });
-        _addLog('[DJI] Aircraft Connection state updated: ${connected ? "CONNECTED" : "DISCONNECTED"}');
+        _addLog('[AIRCRAFT] Drone connection state updated: ${connected ? "CONNECTED" : "DISCONNECTED"}');
         break;
       case 'onTelemetryUpdate':
         final Map data = call.arguments as Map;
@@ -329,7 +329,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     _altitude = -1.0;
                     _speed = -1.0;
                   }
-                  _addLog('HUD reset to unacquired state (waiting for DJI connection).');
+                  _addLog('HUD reset to unacquired state (waiting for drone connection).');
                 }
               });
             },
@@ -453,7 +453,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         ),
                         const SizedBox(height: 6),
                         const Text(
-                          'Configure target RTMP publishing URL to stream the Mini 4 Pro camera feed live.',
+                          'Configure target RTMP publishing URL to stream the aircraft camera feed live.',
                           style: TextStyle(fontSize: 11, color: Colors.grey),
                         ),
                         const SizedBox(height: 12),
@@ -575,7 +575,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
                 _buildHUDCard(
                   'BATTERY LEVEL',
-                  _battery == -1 ? 'WAITING FOR DJI...' : '$_battery%',
+                  _battery == -1 ? 'WAITING FOR AIRCRAFT...' : '$_battery%',
                   Icons.battery_charging_full,
                   _battery == -1 
                       ? Colors.grey 
@@ -603,7 +603,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
           // Interactive terminal console
           Container(
-            height: 140,
+            height: 240,
             margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -782,6 +782,95 @@ class _DashboardPageState extends State<DashboardPage> {
     });
   }
 
+  void _toggleRtmpStreaming() {
+    if (_isRtmpStreaming) {
+      _platform.invokeMethod('stopRTMPStream').then((val) {
+        _addLog('[RTMP] Requested stop stream.');
+      }).catchError((e) {
+        _addLog('[RTMP ERROR] Stop stream failed: $e');
+      });
+    } else {
+      var url = _rtmpController.text.trim();
+      if (url.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please configure a valid stream URL in the RTMP panel first!'),
+            backgroundColor: Color(0xFFEF4444),
+          ),
+        );
+        return;
+      }
+      if (!url.startsWith('rtmp://') && !url.startsWith('rtmps://')) {
+        url = 'rtmp://$url';
+      }
+      _platform.invokeMethod('startRTMPStream', {'url': url}).then((val) {
+        _addLog('[RTMP] Requested start stream to: $url');
+      }).catchError((e) {
+        _addLog('[RTMP ERROR] Start stream failed: $e');
+      });
+    }
+  }
+
+  void _simulateTakeoff() {
+    if (!_isDJIConnected && !_isSimulating) {
+      _addLog('[AIRCRAFT ERROR] Takeoff rejected: drone disconnected.');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Takeoff rejected: Connect drone or enable Simulation Mode!'),
+          backgroundColor: Color(0xFFEF4444),
+        ),
+      );
+      return;
+    }
+    
+    _addLog('[PILOT] Initiating Auto-Takeoff sequence...');
+    double targetAlt = 12.0;
+    double current = 0.0;
+    Timer.periodic(const Duration(milliseconds: 150), (timer) {
+      current += 1.2;
+      if (current >= targetAlt) {
+        current = targetAlt;
+        timer.cancel();
+        _addLog('[PILOT] Aircraft hovered safely at ${targetAlt.toStringAsFixed(1)}m.');
+      }
+      setState(() {
+        _altitude = current;
+        _speed = timer.isActive ? 4.5 : 0.0;
+      });
+    });
+  }
+
+  void _simulateRTH() {
+    if (!_isDJIConnected && !_isSimulating) {
+      _addLog('[AIRCRAFT ERROR] Return-to-Home rejected: drone disconnected.');
+      return;
+    }
+    
+    _addLog('[PILOT] Return-to-Home (RTH) sequence triggered.');
+    _addLog('[PILOT] Returning back to home point (26.12555, 91.81244)...');
+    
+    double currentAlt = _altitude > 0 ? _altitude : 12.0;
+    Timer.periodic(const Duration(milliseconds: 200), (timer) {
+      currentAlt -= 1.5;
+      if (currentAlt <= 0.0) {
+        currentAlt = 0.0;
+        timer.cancel();
+        _addLog('[PILOT] RTH complete. Aircraft landed safely and disarmed.');
+        setState(() {
+          _lat = 26.12555;
+          _lon = 91.81244;
+          _speed = 0.0;
+          _altitude = 0.0;
+        });
+      } else {
+        setState(() {
+          _altitude = currentAlt;
+          _speed = 10.0;
+        });
+      }
+    });
+  }
+
   Widget _buildRawFeedMonitor() {
     final double currentLat = _lat;
     final double currentLon = _lon;
@@ -796,9 +885,11 @@ class _DashboardPageState extends State<DashboardPage> {
         ? 0.1 * math.cos(_simAngle) 
         : (_isRtmpStreaming ? 0.03 * math.cos(DateTime.now().millisecond / 200.0) : 0.0);
 
+    final bool isStreamActive = _isRtmpStreaming || _isSimulating;
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      height: 180,
+      height: 200,
       decoration: BoxDecoration(
         color: const Color(0xFF030712),
         borderRadius: BorderRadius.circular(12),
@@ -808,7 +899,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
         boxShadow: _isRtmpStreaming ? [
           BoxShadow(
-            color: const Color(0xFF10B981).withOpacity(0.15),
+            color: const Color(0xFF10B981).withValues(alpha: 0.15),
             blurRadius: 10,
             spreadRadius: 2,
           )
@@ -822,266 +913,422 @@ class _DashboardPageState extends State<DashboardPage> {
             onTapDown: (details) => _onCameraTap(details, constraints),
             child: Stack(
               children: [
-            Positioned.fill(
-              child: Opacity(
-                opacity: 0.1,
-                child: Container(
-                  color: const Color(0xFF0F172A),
-                ),
-              ),
-            ),
-            
-            if (_isDJIConnected)
-              const Positioned.fill(
-                child: AndroidView(
-                  viewType: 'sq.rogue.telemetry_bridge/dji_camera_view',
-                  creationParams: <String, dynamic>{},
-                  creationParamsCodec: StandardMessageCodec(),
-                ),
-              ),
-            
-            CustomPaint(
-              size: Size.infinite,
-              painter: _HUDGridPainter(
-                horizonOffset: horizonOffset, 
-                rollAngle: rollAngle, 
-                isActive: _isRtmpStreaming || _isSimulating
-              ),
-            ),
-
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: List.generate(45, (index) => 
-                        index % 2 == 0 ? Colors.transparent : Colors.black.withOpacity(0.15)
-                      ),
+                // Dark Background Layer
+                Positioned.fill(
+                  child: Opacity(
+                    opacity: 0.1,
+                    child: Container(
+                      color: const Color(0xFF0F172A),
                     ),
                   ),
                 ),
-              ),
-            ),
-
-            if (!_isRtmpStreaming && !_isSimulating)
-              Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.videocam_off, 
-                      color: Colors.amber.withOpacity(0.6), 
-                      size: 32,
-                      shadows: [
-                        Shadow(color: Colors.amber.withOpacity(0.3), blurRadius: 8)
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'RAW VIDEO FEED STANDBY',
-                      style: TextStyle(
-                        color: Colors.amber.withOpacity(0.8),
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: 'monospace',
-                        letterSpacing: 1.5,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'CONNECT DRONE & START RTMP TO BROADCAST',
-                      style: TextStyle(
-                        color: Colors.grey.withOpacity(0.8),
-                        fontSize: 9,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-            if (_isRtmpStreaming || _isSimulating) ...[
-              Positioned(
-                top: 8,
-                left: 12,
-                child: Row(
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFEF4444),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      _isRtmpStreaming ? 'LIVE // BROADCASTING' : 'SIMULATOR // ACTIVE',
-                      style: const TextStyle(
-                        color: Color(0xFFEF4444),
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Positioned(
-                top: 8,
-                right: 12,
-                child: Text(
-                  '1080P HD @ 60FPS\nBITRATE: ${(4.5 + 0.3 * math.sin(DateTime.now().second.toDouble())).toStringAsFixed(1)} MBPS',
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    color: Color(0xFF38BDF8),
-                    fontSize: 8,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'monospace',
-                  ),
-                ),
-              ),
-
-              Center(
-                child: Container(
-                  width: 60,
-                  height: 60,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: const Color(0xFF38BDF8).withOpacity(0.3),
-                      width: 1,
+                
+                // Native Camera View
+                if (_isDJIConnected)
+                  const Positioned.fill(
+                    child: AndroidView(
+                      viewType: 'sq.rogue.telemetry_bridge/dji_camera_view',
+                      creationParams: <String, dynamic>{},
+                      creationParamsCodec: StandardMessageCodec(),
                     ),
                   ),
+                
+                // horizon Custom Grid HUD
+                CustomPaint(
+                  size: Size.infinite,
+                  painter: _HUDGridPainter(
+                    horizonOffset: horizonOffset, 
+                    rollAngle: rollAngle, 
+                    isActive: isStreamActive,
+                  ),
                 ),
-              ),
 
-              Positioned(
-                bottom: 8,
-                left: 12,
-                right: 12,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'GPS: ${currentLat == 0.0 ? "ACQUIRING..." : "${currentLat.toStringAsFixed(5)}, ${currentLon.toStringAsFixed(5)}"}\nALT: ${currentAlt == -1.0 ? "0.0" : currentAlt.toStringAsFixed(1)} M',
-                      style: TextStyle(
-                        color: const Color(0xFF10B981).withOpacity(0.8),
-                        fontSize: 9,
-                        fontFamily: 'monospace',
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      'BAT: ${currentBat == -1 ? "100" : currentBat}%\nSPD: ${currentSpeed == -1.0 ? "0.0" : currentSpeed.toStringAsFixed(1)} KM/H',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
-                        color: const Color(0xFF10B981).withOpacity(0.8),
-                        fontSize: 9,
-                        fontFamily: 'monospace',
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-            ],   // end of ...[] spread
-
-            // ── GPS No-Signal Banner (top-right corner) ──
-            if (_isDJIConnected && !_isSimulating && _lat == 0.0)
-              Positioned(
-                top: 8,
-                right: 12,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 500),
-                  opacity: 1.0,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFBBF24).withValues(alpha: 0.92),
-                      borderRadius: BorderRadius.circular(6),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFFFBBF24).withValues(alpha: 0.4),
-                          blurRadius: 8,
-                          spreadRadius: 1,
+                // CRT / Scanline effect
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: List.generate(45, (index) => 
+                            index % 2 == 0 ? Colors.transparent : Colors.black.withValues(alpha: 0.12)
+                          ),
                         ),
-                      ],
+                      ),
                     ),
-                    child: const Row(
+                  ),
+                ),
+
+                // Standby state overlay (if not connected and not simulating)
+                if (!_isDJIConnected && !_isSimulating)
+                  Center(
+                    child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.satellite_alt, size: 12, color: Color(0xFF1C1917)),
-                        SizedBox(width: 5),
+                        Icon(
+                          Icons.videocam_off, 
+                          color: Colors.amber.withValues(alpha: 0.6), 
+                          size: 32,
+                          shadows: [
+                            Shadow(color: Colors.amber.withValues(alpha: 0.3), blurRadius: 8)
+                          ],
+                        ),
+                        const SizedBox(height: 8),
                         Text(
-                          'NO GPS SIGNAL',
+                          'RAW VIDEO FEED STANDBY',
                           style: TextStyle(
-                            color: Color(0xFF1C1917),
-                            fontSize: 9,
+                            color: Colors.amber.withValues(alpha: 0.8),
+                            fontSize: 11,
                             fontWeight: FontWeight.bold,
                             fontFamily: 'monospace',
-                            letterSpacing: 0.8,
+                            letterSpacing: 1.5,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'CONNECT AIRCRAFT TO DEPLOY COCKPIT HUD',
+                          style: TextStyle(
+                            color: Colors.grey.withValues(alpha: 0.8),
+                            fontSize: 8,
+                            fontFamily: 'monospace',
+                            letterSpacing: 0.5,
                           ),
                         ),
                       ],
                     ),
                   ),
-                ),
-              ),
 
-            // ── Tap-to-Focus animated ring ──
-            if (_focusDot != null)
-              Positioned(
-                left: _focusDot!.dx - 28,
-                top: _focusDot!.dy - 28,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 400),
-                  opacity: _focusDotOpacity,
-                  child: Container(
-                    width: 56,
-                    height: 56,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: const Color(0xFFFBBF24),
-                        width: 2.0,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFFFBBF24).withValues(alpha: 0.3),
-                          blurRadius: 10,
-                          spreadRadius: 1,
+                // ── DJI FLY-STYLE PREMIUM HUD OVERLAYS ──
+                if (_isDJIConnected || _isSimulating) ...[
+                  // 1. Sleek Top Status Bar
+                  Positioned(
+                    top: 6,
+                    left: 8,
+                    right: 8,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        // Left: Flight Mode Pill
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.6),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 5,
+                                height: 5,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF10B981),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _isSimulating ? 'SIM MODE' : 'N MODE',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.bold,
+                                  fontFamily: 'monospace',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // Center: Flight Status Warning Pill
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: (_lat == 0.0 && !_isSimulating) 
+                                ? const Color(0xFFFBBF24).withValues(alpha: 0.85)
+                                : Colors.black.withValues(alpha: 0.6),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            (!_isDJIConnected && !_isSimulating)
+                                ? 'AIRCRAFT DISCONNECTED'
+                                : ((_lat == 0.0 && !_isSimulating)
+                                    ? 'ACQUIRING GPS LOCK...'
+                                    : (_isSimulating ? 'READY TO FLY (SIM)' : 'READY TO FLY (GPS)')),
+                            style: TextStyle(
+                              color: (_lat == 0.0 && !_isSimulating) ? const Color(0xFF1C1917) : const Color(0xFF10B981),
+                              fontSize: 8.5,
+                              fontWeight: FontWeight.bold,
+                              fontFamily: 'monospace',
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+
+                        // Right: Satellites, Signal & Battery Indicators
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.satellite_alt, color: Colors.white.withValues(alpha: 0.9), size: 11),
+                            const SizedBox(width: 2),
+                            Text(
+                              (_lat == 0.0 && !_isSimulating) ? '0' : '18',
+                              style: const TextStyle(color: Colors.white, fontSize: 8.5, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
+                            ),
+                            const SizedBox(width: 8),
+                            Icon(Icons.wifi, color: Colors.white.withValues(alpha: 0.9), size: 11),
+                            const SizedBox(width: 8),
+                            Icon(
+                              currentBat <= 20 && currentBat != -1 ? Icons.battery_alert : Icons.battery_std, 
+                              color: currentBat <= 20 && currentBat != -1 ? const Color(0xFFEF4444) : const Color(0xFF10B981), 
+                              size: 12
+                            ),
+                            const SizedBox(width: 1),
+                            Text(
+                              '${currentBat == -1 ? 100 : currentBat}%',
+                              style: const TextStyle(color: Colors.white, fontSize: 8.5, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                    child: Stack(
-                      alignment: Alignment.center,
+                  ),
+
+                  // 2. Left Column Action Buttons: Takeoff & Return to Home (RTH)
+                  Positioned(
+                    left: 8,
+                    top: 45,
+                    bottom: 30,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Positioned(top: 0, left: 0, child: Container(width: 8, height: 2, color: const Color(0xFFFBBF24))),
-                        Positioned(top: 0, left: 0, child: Container(width: 2, height: 8, color: const Color(0xFFFBBF24))),
-                        Positioned(top: 0, right: 0, child: Container(width: 8, height: 2, color: const Color(0xFFFBBF24))),
-                        Positioned(top: 0, right: 0, child: Container(width: 2, height: 8, color: const Color(0xFFFBBF24))),
-                        Positioned(bottom: 0, left: 0, child: Container(width: 8, height: 2, color: const Color(0xFFFBBF24))),
-                        Positioned(bottom: 0, left: 0, child: Container(width: 2, height: 8, color: const Color(0xFFFBBF24))),
-                        Positioned(bottom: 0, right: 0, child: Container(width: 8, height: 2, color: const Color(0xFFFBBF24))),
-                        Positioned(bottom: 0, right: 0, child: Container(width: 2, height: 8, color: const Color(0xFFFBBF24))),
-                        Container(width: 4, height: 4, decoration: const BoxDecoration(color: Color(0xFFFBBF24), shape: BoxShape.circle)),
+                        // Auto Takeoff/Hover
+                        GestureDetector(
+                          onTap: _simulateTakeoff,
+                          child: Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.5),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white.withValues(alpha: 0.4), width: 1),
+                            ),
+                            child: const Center(
+                              child: Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 15),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        // Return to Home
+                        GestureDetector(
+                          onTap: _simulateRTH,
+                          child: Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.5),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white.withValues(alpha: 0.4), width: 1),
+                            ),
+                            child: const Center(
+                              child: Icon(Icons.keyboard_return_rounded, color: Colors.amber, size: 14),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                ),
-              ),
-          ],      // end Stack children
-        ),        // Stack
-      ),          // GestureDetector
-    ),            // LayoutBuilder builder
-  ),              // ClipRRect
-);
-}             // end of _buildRawFeedMonitor()
-}             // end of _DashboardPageState
+
+                  // 3. Right Side DJI-Style Shutter/Record Button (Toggles RTMP stream!)
+                  Positioned(
+                    right: 12,
+                    top: 0,
+                    bottom: 0,
+                    child: Center(
+                      child: GestureDetector(
+                        onTap: _toggleRtmpStreaming,
+                        child: Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.white,
+                              width: 2.0,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.3),
+                                blurRadius: 4,
+                              ),
+                            ],
+                          ),
+                          padding: const EdgeInsets.all(3.0),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 250),
+                            decoration: BoxDecoration(
+                              color: _isRtmpStreaming ? const Color(0xFFEF4444) : Colors.white,
+                              shape: _isRtmpStreaming ? BoxShape.rectangle : BoxShape.circle,
+                              borderRadius: _isRtmpStreaming ? BorderRadius.circular(4) : BorderRadius.circular(16),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // 4. Bottom-Left & Bottom-Right Cockpit Telemetry Overlays
+                  Positioned(
+                    bottom: 6,
+                    left: 8,
+                    right: 8,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        // Flight Distance & Height Group
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.5),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'D  ${(currentLat == 0.0 && !_isSimulating) ? "0.0" : "12.4"} M',
+                                style: const TextStyle(color: Colors.white, fontSize: 8.5, fontWeight: FontWeight.w900, fontFamily: 'monospace'),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'H  ${currentAlt == -1.0 ? "0.0" : currentAlt.toStringAsFixed(1)} M',
+                                style: const TextStyle(color: Colors.white, fontSize: 8.5, fontWeight: FontWeight.w900, fontFamily: 'monospace'),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // Flight Speed Indicators (Horizontal Speed & Vertical Speed in m/s)
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.5),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                'HS  ${currentSpeed == -1.0 ? "0.0" : (currentSpeed / 3.6).toStringAsFixed(1)} M/S',
+                                style: const TextStyle(color: Colors.white, fontSize: 8.5, fontWeight: FontWeight.w900, fontFamily: 'monospace'),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'VS  ${currentSpeed > 0 ? "1.2" : "0.0"} M/S',
+                                style: const TextStyle(color: Colors.white, fontSize: 8.5, fontWeight: FontWeight.w900, fontFamily: 'monospace'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
+                // ── GPS No-Signal Banner (top-right corner, only when physical drone connected but no coordinates) ──
+                if (_isDJIConnected && !_isSimulating && _lat == 0.0)
+                  Positioned(
+                    top: 36,
+                    right: 8,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 500),
+                      opacity: 1.0,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFBBF24).withValues(alpha: 0.92),
+                          borderRadius: BorderRadius.circular(4),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFFBBF24).withValues(alpha: 0.4),
+                              blurRadius: 8,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.satellite_alt, size: 10, color: Color(0xFF1C1917)),
+                            SizedBox(width: 4),
+                            Text(
+                              'NO GPS SIGNAL',
+                              style: TextStyle(
+                                color: Color(0xFF1C1917),
+                                fontSize: 8,
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'monospace',
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // ── Tap-to-Focus animated ring ──
+                if (_focusDot != null)
+                  Positioned(
+                    left: _focusDot!.dx - 28,
+                    top: _focusDot!.dy - 28,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 400),
+                      opacity: _focusDotOpacity,
+                      child: Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: const Color(0xFFFBBF24),
+                            width: 2.0,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFFBBF24).withValues(alpha: 0.3),
+                              blurRadius: 10,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Positioned(top: 0, left: 0, child: Container(width: 8, height: 2, color: const Color(0xFFFBBF24))),
+                            Positioned(top: 0, left: 0, child: Container(width: 2, height: 8, color: const Color(0xFFFBBF24))),
+                            Positioned(top: 0, right: 0, child: Container(width: 8, height: 2, color: const Color(0xFFFBBF24))),
+                            Positioned(top: 0, right: 0, child: Container(width: 2, height: 8, color: const Color(0xFFFBBF24))),
+                            Positioned(bottom: 0, left: 0, child: Container(width: 8, height: 2, color: const Color(0xFFFBBF24))),
+                            Positioned(bottom: 0, left: 0, child: Container(width: 2, height: 8, color: const Color(0xFFFBBF24))),
+                            Positioned(bottom: 0, right: 0, child: Container(width: 8, height: 2, color: const Color(0xFFFBBF24))),
+                            Positioned(bottom: 0, right: 0, child: Container(width: 2, height: 8, color: const Color(0xFFFBBF24))),
+                            Container(width: 4, height: 4, decoration: const BoxDecoration(color: Color(0xFFFBBF24), shape: BoxShape.circle)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],      // end Stack children
+            ),        // Stack
+          ),          // GestureDetector
+        ),            // LayoutBuilder builder
+      ),              // ClipRRect
+    );
+  }
+} // end of _DashboardPageState
 
 
 class _HUDGridPainter extends CustomPainter {
