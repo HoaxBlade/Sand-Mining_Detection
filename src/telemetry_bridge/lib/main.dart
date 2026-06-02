@@ -1170,7 +1170,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             decoration: BoxDecoration(
                               color: _isRtmpStreaming ? const Color(0xFFEF4444) : Colors.white,
                               shape: _isRtmpStreaming ? BoxShape.rectangle : BoxShape.circle,
-                              borderRadius: _isRtmpStreaming ? BorderRadius.circular(4) : BorderRadius.circular(16),
+                              borderRadius: _isRtmpStreaming ? BorderRadius.circular(4) : null,
                             ),
                           ),
                         ),
