@@ -324,6 +324,12 @@ def _video_capture_loop():
                     use_synthetic_video = True
                     global_video_w = 1280
                     global_video_h = 720
+                    # Clear stale frames from the previous stream so YOLO picks up
+                    # synthetic frames right away instead of re-inferring dead data.
+                    latest_raw_frame = b""
+                    latest_overlay_frame = b""
+                    with frame_lock:
+                        latest_bgr_frame = None
 
         if local_webcam_mode:
             # If the user is actively streaming their browser webcam, pause drone file playback!
@@ -393,6 +399,13 @@ def _video_capture_loop():
                     grabber = None
                     current_source = None
                     consecutive_drops = 0
+                    # Clear stale frame buffers so the YOLO inference loop doesn't
+                    # keep processing the last frame from before the disconnect.
+                    # This forces YOLO to idle cleanly until fresh frames arrive.
+                    latest_raw_frame = b""
+                    latest_overlay_frame = b""
+                    with frame_lock:
+                        latest_bgr_frame = None
                     time.sleep(2.0)
                 else:
                     logger.warning("  RTSP frame drop  retrying...")

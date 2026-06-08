@@ -953,6 +953,9 @@
                             <input type="checkbox" id="filter-truck" checked class="class-filter">
                             <span style="color:#60a5fa;"> Dumper Trucks</span>
                         </label>
+                        <span style="margin-left:auto; font-size:10px; color:#6b7280; font-weight:600;">
+                            <span id="visible-markers-count">0</span> markers
+                        </span>
                     </div>
                 </div>
 
@@ -971,6 +974,9 @@
                             <span class="val" id="active-zone-label" style="color:#f87171;">1.0 km</span>
                         </div>
                         <input id="buffer-slider" type="range" min="250" max="3000" step="250" value="1000">
+                        <div style="text-align:right; font-size:10px; color:#f87171; margin-top:2px;">
+                            Buffer: <span id="buffer-km-label">1.0 km</span>
+                        </div>
 
                         <div class="divider" style="margin: 8px 0;"></div>
 
@@ -3056,7 +3062,7 @@
             <form id="add-drone-form" onsubmit="submitAddDroneForm(event)">
                 <div style="margin-bottom: 16px;">
                     <label
-                        style="display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; tracking: 0.05em; color: #9ca3af; margin-bottom: 6px; font-family:'Inter',sans-serif;">Drone
+                        style="display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #9ca3af; margin-bottom: 6px; font-family:'Inter',sans-serif;">Drone
                         Name / Call Sign *</label>
                     <input type="text" id="modal-drone-name" placeholder="e.g. East River Patrol" required
                         style="width: 100%; background: #1f2937; border: 1px solid #4b5563; color: #f3f4f6; border-radius: 8px; padding: 10px 12px; font-size: 13px; outline: none; transition: border-color 0.2s;"
@@ -3064,7 +3070,7 @@
                 </div>
                 <div style="margin-bottom: 16px;">
                     <label
-                        style="display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; tracking: 0.05em; color: #9ca3af; margin-bottom: 6px; font-family:'Inter',sans-serif;">Unique
+                        style="display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #9ca3af; margin-bottom: 6px; font-family:'Inter',sans-serif;">Unique
                         Drone ID *</label>
                     <input type="text" id="modal-drone-id" placeholder="e.g. drone_101" required
                         pattern="^[a-zA-Z0-9_]+$"
@@ -3073,7 +3079,7 @@
                 </div>
                 <div style="margin-bottom: 20px;">
                     <label
-                        style="display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; tracking: 0.05em; color: #9ca3af; margin-bottom: 6px; font-family:'Inter',sans-serif;">AI
+                        style="display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #9ca3af; margin-bottom: 6px; font-family:'Inter',sans-serif;">AI
                         Processing Location *</label>
                     <select id="modal-drone-mode" required
                         style="width: 100%; background: #1f2937; border: 1px solid #4b5563; color: #f3f4f6; border-radius: 8px; padding: 10px 12px; font-size: 13px; outline: none; transition: border-color 0.2s;"
