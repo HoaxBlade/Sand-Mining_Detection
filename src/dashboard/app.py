@@ -13,6 +13,8 @@ from fastapi.responses import StreamingResponse, HTMLResponse, Response, Redirec
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import asyncio
+import subprocess
+
 import sys
 import torch
 import numpy as np
@@ -151,6 +153,71 @@ frame_lock = threading.Lock()
 main_loop = None
 raw_frame_event = None
 overlay_frame_event = None
+
+global_overlay_streamer = None
+
+class RtmpStreamer:
+    def __init__(self, rtmp_url, width, height, fps=15):
+        self.rtmp_url = rtmp_url
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.process = None
+
+    def start(self):
+        cmd = [
+            'ffmpeg',
+            '-y',
+            '-f', 'rawvideo',
+            '-vcodec', 'rawvideo',
+            '-pix_fmt', 'bgr24',
+            '-s', f'{self.width}x{self.height}',
+            '-r', str(self.fps),
+            '-i', '-',
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-preset', 'ultrafast',
+            '-tune', 'zerolatency',
+            '-g', str(self.fps * 2),
+            '-f', 'flv',
+            self.rtmp_url
+        ]
+        try:
+            self.process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            logger.info("Started FFmpeg RTMP push to {}".format(self.rtmp_url))
+        except Exception as e:
+            logger.error("Failed to start FFmpeg process for RTMP: {}".format(e))
+
+    def write_frame(self, frame):
+        if self.process is None or self.process.poll() is not None:
+            self.start()
+        if self.process and self.process.stdin:
+            try:
+                self.process.stdin.write(frame.tobytes())
+                self.process.stdin.flush()
+            except Exception as e:
+                logger.error("Error writing frame to FFmpeg RTMP pipe: {}".format(e))
+                self.stop()
+
+    def stop(self):
+        if self.process:
+            try:
+                self.process.stdin.close()
+            except Exception:
+                pass
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=1.0)
+            except Exception:
+                pass
+            self.process = None
+            logger.info("Stopped FFmpeg RTMP push to {}".format(self.rtmp_url))
+
 
 def notify_raw_frame():
     global main_loop, raw_frame_event
@@ -476,7 +543,7 @@ def _yolo_inference_loop():
     This guarantees that the raw stream remains high-FPS (30 FPS), and the AI stream
     never falls behind real-time or plays in slow-motion.
     """
-    global latest_bgr_frame, latest_overlay_frame, latest_webcam_detections, _yolo_model, local_webcam_mode
+    global latest_bgr_frame, latest_overlay_frame, latest_webcam_detections, _yolo_model, local_webcam_mode, global_overlay_streamer
     try:
         import cv2
     except ImportError:
@@ -492,6 +559,9 @@ def _yolo_inference_loop():
         # OPTIMIZATION: If no dashboard clients are actively connected, sleep and skip inference!
         try:
             if len(manager.active_connections) == 0:
+                if global_overlay_streamer is not None:
+                    global_overlay_streamer.stop()
+                    global_overlay_streamer = None
                 time.sleep(1.0)
                 continue
         except NameError:
@@ -638,6 +708,23 @@ def _yolo_inference_loop():
                         recording_writer.write(recording_frame)
                     except Exception as e:
                         logger.error("Error writing frame to recording: {}".format(e))
+
+        # Stream the overlay frame to MediaMTX via RTMP for WebRTC
+        if overlay is not None:
+            if global_overlay_streamer is None:
+                global_overlay_streamer = RtmpStreamer(
+                    rtmp_url="rtmp://127.0.0.1:1935/live/drone_overlay",
+                    width=854,
+                    height=480,
+                    fps=15
+                )
+            h_ov, w_ov = overlay.shape[:2]
+            if w_ov != 854 or h_ov != 480:
+                stream_frame = cv2.resize(overlay, (854, 480))
+            else:
+                stream_frame = overlay
+            global_overlay_streamer.write_frame(stream_frame)
+
 
 
 # Mount the project's data directory so the frontend can directly load spatial GeoJSON files
@@ -891,10 +978,28 @@ def drone_yolo_inference_loop(drone_id: str):
                 # Signal frame ready
                 notify_drone_frame(drone_id, "overlay")
                 
+                overlay = annotated_frame
             else:
                 # Mirror raw frame if no model
                 drone["latest_overlay_frame"] = raw_bytes
                 notify_drone_frame(drone_id, "overlay")
+                overlay = frame
+
+            # Stream the overlay frame to MediaMTX via RTMP for WebRTC
+            if overlay is not None:
+                if "overlay_streamer" not in drone or drone["overlay_streamer"] is None:
+                    drone["overlay_streamer"] = RtmpStreamer(
+                        rtmp_url="rtmp://127.0.0.1:1935/live/{}_overlay".format(drone_id),
+                        width=854,
+                        height=480,
+                        fps=15
+                    )
+                h_ov, w_ov = overlay.shape[:2]
+                if w_ov != 854 or h_ov != 480:
+                    stream_frame = cv2.resize(overlay, (854, 480))
+                else:
+                    stream_frame = overlay
+                drone["overlay_streamer"].write_frame(stream_frame)
 
         except Exception as e:
             logger.error("Error in drone YOLO loop ({}): {}".format(drone_id, e))
@@ -902,6 +1007,13 @@ def drone_yolo_inference_loop(drone_id: str):
 
         # Throttled sleep to keep CPU cool
         time.sleep(0.033) # ~30 FPS
+
+    if "overlay_streamer" in drone and drone["overlay_streamer"] is not None:
+        try:
+            drone["overlay_streamer"].stop()
+        except Exception:
+            pass
+        drone["overlay_streamer"] = None
 
     drone["yolo_thread_running"] = False
     logger.info("Dedicated YOLO inference loop terminated for drone: {}".format(drone_id))

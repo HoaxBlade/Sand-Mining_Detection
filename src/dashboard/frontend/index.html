@@ -842,6 +842,8 @@
                                 style="flex:1; background:#111827; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden;">
                                 <img id="img-stream-overlay" src="" alt="AI Detection Feed"
                                     style="width:100%; height:100%; object-fit:cover; aspect-ratio:16/9;" />
+                                <video id="video-stream-overlay" autoplay muted playsinline
+                                    style="display:none; width:100%; height:100%; object-fit:cover; aspect-ratio:16/9;"></video>
 
                                 <!-- Sleek AI Engine Standby Overlay -->
                                 <div id="standby-overlay-ai"
@@ -1976,7 +1978,7 @@
             }
 
             // Hot-swap stream sources
-            if (window.webrtcPeerConnection) {
+            if (window.webrtcPeerConnectionRaw || window.webrtcPeerConnectionOverlay) {
                 window.stopWebRTC();
                 window.toggleWebRTC();
             } else {
@@ -2100,8 +2102,10 @@
         }
 
         function setWebRtcUiState(active, connecting = false) {
-            const videoEl = document.getElementById('video-stream-raw');
-            const imgEl   = document.getElementById('img-stream-raw');
+            const videoElRaw = document.getElementById('video-stream-raw');
+            const imgElRaw   = document.getElementById('img-stream-raw');
+            const videoElOverlay = document.getElementById('video-stream-overlay');
+            const imgElOverlay   = document.getElementById('img-stream-overlay');
             const dot      = document.getElementById('webrtc-status-dot');
             const text     = document.getElementById('webrtc-status-text');
             const btn      = document.getElementById('btn-toggle-webrtc');
@@ -2121,8 +2125,10 @@
                 btn.style.color      = '#4ade80';
                 btn.style.borderColor = 'rgba(34,197,94,0.3)';
                 btn.style.background  = 'rgba(20,83,45,0.4)';
-                if (videoEl) videoEl.style.display = 'block';
-                if (imgEl)   imgEl.style.display   = 'none';
+                if (videoElRaw) videoElRaw.style.display = 'block';
+                if (imgElRaw)   imgElRaw.style.display   = 'none';
+                if (videoElOverlay) videoElOverlay.style.display = 'block';
+                if (imgElOverlay)   imgElOverlay.style.display   = 'none';
             } else {
                 dot.style.background = '#9ca3af';
                 dot.style.boxShadow  = '0 0 4px #9ca3af';
@@ -2130,8 +2136,10 @@
                 btn.style.color      = '#9ca3af';
                 btn.style.borderColor = 'rgba(255,255,255,0.15)';
                 btn.style.background  = 'rgba(15,23,42,0.85)';
-                if (videoEl) { videoEl.style.display = 'none'; videoEl.srcObject = null; }
-                if (imgEl)   imgEl.style.display     = 'block';
+                if (videoElRaw) { videoElRaw.style.display = 'none'; videoElRaw.srcObject = null; }
+                if (imgElRaw)   imgElRaw.style.display     = 'block';
+                if (videoElOverlay) { videoElOverlay.style.display = 'none'; videoElOverlay.srcObject = null; }
+                if (imgElOverlay)   imgElOverlay.style.display     = 'block';
             }
         }
 
@@ -2151,10 +2159,49 @@
             });
         }
 
+        async function connectWhep(whepUrl, videoEl) {
+            const pc = new RTCPeerConnection({
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' }
+                ],
+                iceTransportPolicy: 'all'
+            });
+
+            pc.ontrack = (event) => {
+                console.log('[WebRTC] Track received:', event.track.kind);
+                if (videoEl && event.streams[0]) {
+                    videoEl.srcObject = event.streams[0];
+                }
+            };
+
+            pc.addTransceiver('video', { direction: 'recvonly' });
+
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            await waitForIceGathering(pc);
+
+            const response = await fetch(whepUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/sdp' },
+                body: pc.localDescription.sdp,
+                credentials: 'omit'
+            });
+
+            if (!response.ok) {
+                const errBody = await response.text().catch(() => '');
+                throw new Error(`WHEP server returned HTTP ${response.status}${errBody ? ': ' + errBody.trim().slice(0, 120) : ''}`);
+            }
+
+            const answerSdp = await response.text();
+            await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answerSdp }));
+            return pc;
+        }
+
         window.toggleWebRTC = async function () {
             if (_webrtcActive) {
                 // --- Turn OFF ---
-                console.log('[WebRTC] Stopping low-latency WHEP feed…');
+                console.log('[WebRTC] Stopping low-latency WHEP feeds…');
                 _webrtcActive = false;
                 window.stopWebRTC();
                 setWebRtcUiState(false);
@@ -2164,40 +2211,26 @@
                 setWebRtcUiState(false, true); // amber "connecting" state
 
                 try {
-                    // Use the backend hostname (same server as RTMP ingest) not the browser tab's host
                     const backendHost = new URL(BACKEND_URL).hostname;
                     const protocol   = window.location.protocol;
                     const streamKey  = currentDroneId === 'default_drone' ? 'drone' : currentDroneId;
-                    // MediaMTX WHEP path: /<streamKey>/whep  (the /live/ segment is the app name in the RTMP URL)
-                    const whepUrl    = `${protocol}//${backendHost}:8889/live/${streamKey}/whep`;
+                    
+                    const whepUrlRaw      = `${protocol}//${backendHost}:8889/live/${streamKey}/whep`;
+                    const whepUrlOverlay  = `${protocol}//${backendHost}:8889/live/${streamKey}_overlay/whep`;
 
-                    console.log(`[WebRTC] Connecting to WHEP endpoint: ${whepUrl}`);
+                    console.log(`[WebRTC] Connecting to WHEP endpoints:\nRaw: ${whepUrlRaw}\nOverlay: ${whepUrlOverlay}`);
 
-                    const pc = new RTCPeerConnection({
-                        iceServers: [
-                            { urls: 'stun:stun.l.google.com:19302' },
-                            { urls: 'stun:stun1.l.google.com:19302' }
-                        ],
-                        iceTransportPolicy: 'all'
-                    });
-                    window.webrtcPeerConnection = pc;
+                    const pcRaw = await connectWhep(whepUrlRaw, document.getElementById('video-stream-raw'));
+                    window.webrtcPeerConnectionRaw = pcRaw;
 
-                    // Deliver video track to <video> element
-                    pc.ontrack = (event) => {
-                        console.log('[WebRTC] Track received:', event.track.kind);
-                        const videoEl = document.getElementById('video-stream-raw');
-                        if (videoEl && event.streams[0]) videoEl.srcObject = event.streams[0];
-                    };
-
-                    // Monitor live connection state — revert UI if the connection drops
-                    pc.onconnectionstatechange = () => {
-                        console.log('[WebRTC] Connection state:', pc.connectionState);
-                        if (pc.connectionState === 'connected') {
+                    pcRaw.onconnectionstatechange = () => {
+                        console.log('[WebRTC Raw] Connection state:', pcRaw.connectionState);
+                        if (pcRaw.connectionState === 'connected') {
                             setWebRtcUiState(true);
                             showWebRtcToast('✓ WebRTC low-latency feed active');
-                        } else if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
+                        } else if (['failed', 'disconnected', 'closed'].includes(pcRaw.connectionState)) {
                             if (_webrtcActive) {
-                                console.warn('[WebRTC] Connection lost, reverting to MJPEG…');
+                                console.warn('[WebRTC Raw] Connection lost, reverting to MJPEG…');
                                 _webrtcActive = false;
                                 window.stopWebRTC();
                                 setWebRtcUiState(false);
@@ -2206,29 +2239,10 @@
                         }
                     };
 
-                    // Video-only receive — RTMP streams pushed from drones are video-only
-                    pc.addTransceiver('video', { direction: 'recvonly' });
+                    const pcOverlay = await connectWhep(whepUrlOverlay, document.getElementById('video-stream-overlay'));
+                    window.webrtcPeerConnectionOverlay = pcOverlay;
 
-                    // Create SDP offer and wait for full ICE candidate gathering before sending
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                    await waitForIceGathering(pc);
-
-                    const response = await fetch(whepUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/sdp' },
-                        body: pc.localDescription.sdp,   // Use complete SDP with all ICE candidates
-                        credentials: 'omit'             // Bypasses CORS credentials constraints for wildcard origin
-                    });
-
-                    if (!response.ok) {
-                        const errBody = await response.text().catch(() => '');
-                        throw new Error(`WHEP server returned HTTP ${response.status}${errBody ? ': ' + errBody.trim().slice(0, 120) : ''}`);
-                    }
-
-                    const answerSdp = await response.text();
-                    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answerSdp }));
-                    console.log('[WebRTC] WHEP handshake complete — awaiting ICE connection…');
+                    console.log('[WebRTC] WHEP handshakes complete — awaiting ICE connection…');
 
                 } catch (err) {
                     console.error('[WebRTC ERROR]', err);
@@ -2241,9 +2255,13 @@
         };
 
         window.stopWebRTC = function () {
-            if (window.webrtcPeerConnection) {
-                try { window.webrtcPeerConnection.close(); } catch (e) {}
-                window.webrtcPeerConnection = null;
+            if (window.webrtcPeerConnectionRaw) {
+                try { window.webrtcPeerConnectionRaw.close(); } catch (e) {}
+                window.webrtcPeerConnectionRaw = null;
+            }
+            if (window.webrtcPeerConnectionOverlay) {
+                try { window.webrtcPeerConnectionOverlay.close(); } catch (e) {}
+                window.webrtcPeerConnectionOverlay = null;
             }
         };
 
