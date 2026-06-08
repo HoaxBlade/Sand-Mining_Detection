@@ -404,6 +404,8 @@ def _video_capture_loop():
             if time.time() - last_webcam_frame_time > 3.0:
                 local_webcam_mode = False
                 logger.info(" Browser webcam stream timed out. Restoring default drone video playback.")
+                latest_raw_frame = b""
+                latest_overlay_frame = b""
             else:
                 time.sleep(0.06)
                 continue
@@ -596,13 +598,14 @@ def _yolo_inference_loop():
 
         frame = None
         # Grab from raw bytes buffer if available (decoupled edge/webcam source)
-        raw_bytes = latest_raw_frame
-        if raw_bytes:
-            try:
-                nparr = np.frombuffer(raw_bytes, np.uint8)
-                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            except Exception as e:
-                logger.debug("YOLO thread frame decode error: {}".format(e))
+        if local_webcam_mode:
+            raw_bytes = latest_raw_frame
+            if raw_bytes:
+                try:
+                    nparr = np.frombuffer(raw_bytes, np.uint8)
+                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                except Exception as e:
+                    logger.debug("YOLO thread frame decode error: {}".format(e))
 
         # Fallback to local thread-safe latest_bgr_frame if needed
         if frame is None:
@@ -947,6 +950,21 @@ def drone_yolo_inference_loop(drone_id: str):
     logger.info("Dedicated YOLO inference loop started for drone: {}".format(drone_id))
 
     while drone["yolo_thread_running"] and len(drone["subscribed_clients"]) > 0 and not drone["edge_rendering_active"]:
+        # Check if the drone feed has timed out (stale for more than 3 seconds)
+        if drone["last_frame_time"] > 0 and time.time() - drone["last_frame_time"] > 3.0:
+            if drone["latest_raw_frame"]:
+                logger.info("Drone {} stream timed out. Clearing stale frames.".format(drone_id))
+                drone["latest_raw_frame"] = b""
+                drone["latest_overlay_frame"] = b""
+                if "overlay_streamer" in drone and drone["overlay_streamer"] is not None:
+                    try:
+                        drone["overlay_streamer"].stop()
+                    except Exception:
+                        pass
+                    drone["overlay_streamer"] = None
+            time.sleep(0.1)
+            continue
+
         # Get the latest raw BGR frame from raw bytes
         raw_bytes = drone["latest_raw_frame"]
         if not raw_bytes:
@@ -988,8 +1006,9 @@ def drone_yolo_inference_loop(drone_id: str):
             # Stream the overlay frame to MediaMTX via RTMP for WebRTC
             if overlay is not None:
                 if "overlay_streamer" not in drone or drone["overlay_streamer"] is None:
+                    stream_key = "drone" if drone_id == "default_drone" else drone_id
                     drone["overlay_streamer"] = RtmpStreamer(
-                        rtmp_url="rtmp://127.0.0.1:1935/live/{}_overlay".format(drone_id),
+                        rtmp_url="rtmp://127.0.0.1:1935/live/{}_overlay".format(stream_key),
                         width=854,
                         height=480,
                         fps=15
