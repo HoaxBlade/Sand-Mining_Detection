@@ -288,8 +288,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    // ignore: deprecated_member_use
-                    color: statusColor.withOpacity(0.5),
+                    color: statusColor.withValues(alpha: 0.5),
                     blurRadius: 8,
                     spreadRadius: 2,
                   )
@@ -440,8 +439,8 @@ class _DashboardPageState extends State<DashboardPage> {
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(
                                 color: _isRtmpStreaming 
-                                    ? const Color(0xFF10B981).withOpacity(0.15) 
-                                    : Colors.grey.withOpacity(0.15),
+                                    ? const Color(0xFF10B981).withValues(alpha: 0.15) 
+                                    : Colors.grey.withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
@@ -631,8 +630,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               'PILOT CONSOLE',
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                // ignore: deprecated_member_use
-                                color: const Color(0xFF38BDF8).withOpacity(0.8),
+                                color: const Color(0xFF38BDF8).withValues(alpha: 0.8),
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
                                 fontFamily: 'monospace',
@@ -720,8 +718,7 @@ class _DashboardPageState extends State<DashboardPage> {
       decoration: BoxDecoration(
         color: const Color(0xFF1E293B),
         borderRadius: BorderRadius.circular(8),
-        // ignore: deprecated_member_use
-        border: Border.all(color: color.withOpacity(0.2), width: 1),
+        border: Border.all(color: color.withValues(alpha: 0.2), width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -750,8 +747,7 @@ class _DashboardPageState extends State<DashboardPage> {
               fontFamily: 'monospace',
               shadows: [
                 Shadow(
-                  // ignore: deprecated_member_use
-                  color: color.withOpacity(0.3),
+                  color: color.withValues(alpha: 0.3),
                   blurRadius: 4,
                 )
               ],
@@ -1403,7 +1399,7 @@ class _HUDGridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = isActive ? const Color(0xFF38BDF8).withOpacity(0.15) : const Color(0xFF334155).withOpacity(0.1)
+      ..color = isActive ? const Color(0xFF38BDF8).withValues(alpha: 0.15) : const Color(0xFF334155).withValues(alpha: 0.1)
       ..strokeWidth = 1.0
       ..style = PaintingStyle.stroke;
 
@@ -1420,7 +1416,7 @@ class _HUDGridPainter extends CustomPainter {
 
     if (isActive) {
       final hudPaint = Paint()
-        ..color = const Color(0xFF10B981).withOpacity(0.4)
+        ..color = const Color(0xFF10B981).withValues(alpha: 0.4)
         ..strokeWidth = 1.5
         ..style = PaintingStyle.stroke;
 
