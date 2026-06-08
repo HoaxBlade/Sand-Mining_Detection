@@ -760,6 +760,15 @@
                                 style="flex:1; background:#111827; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden;">
                                 <img id="img-stream-raw" src="" alt="Raw Drone Feed"
                                     style="width:100%; height:100%; object-fit:cover; aspect-ratio:16/9;" />
+                                <video id="video-stream-raw" autoplay muted playsinline
+                                    style="display:none; width:100%; height:100%; object-fit:cover; aspect-ratio:16/9;"></video>
+
+                                <!-- Low-Latency WebRTC Toggle Button -->
+                                <button id="btn-toggle-webrtc" onclick="window.toggleWebRTC()"
+                                    style="position:absolute; bottom:12px; right:12px; z-index:15; background:rgba(15, 23, 42, 0.85); border:1px solid rgba(255,255,255,0.15); color:#9ca3af; border-radius:6px; padding:5px 10px; font-size:10px; cursor:pointer; font-weight:700; display:flex; align-items:center; gap:6px; backdrop-filter:blur(6px); transition:all 0.2s; font-family:'Inter',sans-serif; letter-spacing:0.04em;">
+                                    <span id="webrtc-status-dot" style="display:inline-block; width:6px; height:6px; background:#9ca3af; border-radius:50%; box-shadow:0 0 4px #9ca3af;"></span>
+                                    <span id="webrtc-status-text">LOW LATENCY FEED (OFF)</span>
+                                </button>
 
                                 <!-- Beautiful HTML Glassmorphic Standby Overlay -->
                                 <div id="standby-overlay"
@@ -1364,7 +1373,7 @@
         // Global Fetch interceptor to automatically include session cookies and tokens in cross-origin requests
         const originalFetch = window.fetch;
         window.fetch = function(url, options = {}) {
-            options.credentials = 'include';
+            options.credentials = options.credentials || 'include';
             
             // Inject dynamic token header to bypass browser third-party cookie blocking
             const sessionId = localStorage.getItem('session_id');
@@ -1920,7 +1929,12 @@
             }
 
             // Hot-swap stream sources
-            document.getElementById('img-stream-raw').src = BASE_PATH + 'stream/raw?drone_id=' + encodeURIComponent(currentDroneId);
+            if (window.webrtcPeerConnection) {
+                window.stopWebRTC();
+                window.toggleWebRTC();
+            } else {
+                document.getElementById('img-stream-raw').src = BASE_PATH + 'stream/raw?drone_id=' + encodeURIComponent(currentDroneId);
+            }
             document.getElementById('img-stream-overlay').src = BASE_PATH + 'stream/overlay?drone_id=' + encodeURIComponent(currentDroneId);
 
             // Re-center map to active drone if position is known
@@ -2014,6 +2028,177 @@
                 setTimeout(connectWebSocket, 3000);
             };
         }
+
+        // Low-latency WebRTC (WHEP) Egress Client logic
+        window.webrtcPeerConnection = null;
+        let _webrtcActive = false; // Tracks intended state separately from PC object
+
+        // Inline toast helper for WebRTC status messages (replaces disruptive alert())
+        function showWebRtcToast(msg, isError = false) {
+            let toast = document.getElementById('webrtc-toast');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = 'webrtc-toast';
+                toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;padding:10px 20px;border-radius:8px;font-family:Inter,sans-serif;font-size:13px;font-weight:600;letter-spacing:0.03em;backdrop-filter:blur(8px);transition:opacity 0.4s;pointer-events:none;';
+                document.body.appendChild(toast);
+            }
+            toast.style.background = isError ? 'rgba(220,38,38,0.92)' : 'rgba(22,163,74,0.92)';
+            toast.style.color = '#fff';
+            toast.style.border = isError ? '1px solid rgba(239,68,68,0.5)' : '1px solid rgba(34,197,94,0.4)';
+            toast.style.boxShadow = isError ? '0 4px 24px rgba(220,38,38,0.35)' : '0 4px 24px rgba(34,197,94,0.25)';
+            toast.textContent = msg;
+            toast.style.opacity = '1';
+            clearTimeout(toast._hideTimer);
+            toast._hideTimer = setTimeout(() => { toast.style.opacity = '0'; }, 4000);
+        }
+
+        function setWebRtcUiState(active, connecting = false) {
+            const videoEl = document.getElementById('video-stream-raw');
+            const imgEl   = document.getElementById('img-stream-raw');
+            const dot      = document.getElementById('webrtc-status-dot');
+            const text     = document.getElementById('webrtc-status-text');
+            const btn      = document.getElementById('btn-toggle-webrtc');
+            if (!dot || !text || !btn) return;
+
+            if (connecting) {
+                dot.style.background = '#f59e0b';
+                dot.style.boxShadow  = '0 0 8px #f59e0b';
+                text.textContent     = 'LOW LATENCY FEED (CONNECTING…)';
+                btn.style.color      = '#fbbf24';
+                btn.style.borderColor = 'rgba(245,158,11,0.35)';
+                btn.style.background  = 'rgba(78,52,5,0.45)';
+            } else if (active) {
+                dot.style.background = '#22c55e';
+                dot.style.boxShadow  = '0 0 8px #22c55e';
+                text.textContent     = 'LOW LATENCY FEED (ON)';
+                btn.style.color      = '#4ade80';
+                btn.style.borderColor = 'rgba(34,197,94,0.3)';
+                btn.style.background  = 'rgba(20,83,45,0.4)';
+                if (videoEl) videoEl.style.display = 'block';
+                if (imgEl)   imgEl.style.display   = 'none';
+            } else {
+                dot.style.background = '#9ca3af';
+                dot.style.boxShadow  = '0 0 4px #9ca3af';
+                text.textContent     = 'LOW LATENCY FEED (OFF)';
+                btn.style.color      = '#9ca3af';
+                btn.style.borderColor = 'rgba(255,255,255,0.15)';
+                btn.style.background  = 'rgba(15,23,42,0.85)';
+                if (videoEl) { videoEl.style.display = 'none'; videoEl.srcObject = null; }
+                if (imgEl)   imgEl.style.display     = 'block';
+            }
+        }
+
+        // Wait for ICE gathering to fully complete before returning the final SDP
+        function waitForIceGathering(pc) {
+            return new Promise(resolve => {
+                if (pc.iceGatheringState === 'complete') { resolve(); return; }
+                const check = () => {
+                    if (pc.iceGatheringState === 'complete') {
+                        pc.removeEventListener('icegatheringstatechange', check);
+                        resolve();
+                    }
+                };
+                pc.addEventListener('icegatheringstatechange', check);
+                // Safety timeout: 5 s max wait
+                setTimeout(resolve, 5000);
+            });
+        }
+
+        window.toggleWebRTC = async function () {
+            if (_webrtcActive) {
+                // --- Turn OFF ---
+                console.log('[WebRTC] Stopping low-latency WHEP feed…');
+                _webrtcActive = false;
+                window.stopWebRTC();
+                setWebRtcUiState(false);
+            } else {
+                // --- Turn ON ---
+                _webrtcActive = true;
+                setWebRtcUiState(false, true); // amber "connecting" state
+
+                try {
+                    // Use the backend hostname (same server as RTMP ingest) not the browser tab's host
+                    const backendHost = new URL(BACKEND_URL).hostname;
+                    const protocol   = window.location.protocol;
+                    const streamKey  = currentDroneId === 'default_drone' ? 'drone' : currentDroneId;
+                    // MediaMTX WHEP path: /<streamKey>/whep  (the /live/ segment is the app name in the RTMP URL)
+                    const whepUrl    = `${protocol}//${backendHost}:8889/live/${streamKey}/whep`;
+
+                    console.log(`[WebRTC] Connecting to WHEP endpoint: ${whepUrl}`);
+
+                    const pc = new RTCPeerConnection({
+                        iceServers: [
+                            { urls: 'stun:stun.l.google.com:19302' },
+                            { urls: 'stun:stun1.l.google.com:19302' }
+                        ],
+                        iceTransportPolicy: 'all'
+                    });
+                    window.webrtcPeerConnection = pc;
+
+                    // Deliver video track to <video> element
+                    pc.ontrack = (event) => {
+                        console.log('[WebRTC] Track received:', event.track.kind);
+                        const videoEl = document.getElementById('video-stream-raw');
+                        if (videoEl && event.streams[0]) videoEl.srcObject = event.streams[0];
+                    };
+
+                    // Monitor live connection state — revert UI if the connection drops
+                    pc.onconnectionstatechange = () => {
+                        console.log('[WebRTC] Connection state:', pc.connectionState);
+                        if (pc.connectionState === 'connected') {
+                            setWebRtcUiState(true);
+                            showWebRtcToast('✓ WebRTC low-latency feed active');
+                        } else if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
+                            if (_webrtcActive) {
+                                console.warn('[WebRTC] Connection lost, reverting to MJPEG…');
+                                _webrtcActive = false;
+                                window.stopWebRTC();
+                                setWebRtcUiState(false);
+                                showWebRtcToast('⚠ WebRTC stream dropped. Reverted to MJPEG feed.', true);
+                            }
+                        }
+                    };
+
+                    // Video-only receive — RTMP streams pushed from drones are video-only
+                    pc.addTransceiver('video', { direction: 'recvonly' });
+
+                    // Create SDP offer and wait for full ICE candidate gathering before sending
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    await waitForIceGathering(pc);
+
+                    const response = await fetch(whepUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/sdp' },
+                        body: pc.localDescription.sdp,   // Use complete SDP with all ICE candidates
+                        credentials: 'omit'             // Bypasses CORS credentials constraints for wildcard origin
+                    });
+
+                    if (!response.ok) {
+                        const errBody = await response.text().catch(() => '');
+                        throw new Error(`WHEP server returned HTTP ${response.status}${errBody ? ': ' + errBody.trim().slice(0, 120) : ''}`);
+                    }
+
+                    const answerSdp = await response.text();
+                    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answerSdp }));
+                    console.log('[WebRTC] WHEP handshake complete — awaiting ICE connection…');
+
+                } catch (err) {
+                    console.error('[WebRTC ERROR]', err);
+                    _webrtcActive = false;
+                    window.stopWebRTC();
+                    setWebRtcUiState(false);
+                    showWebRtcToast(`✗ WebRTC failed: ${err.message}`, true);
+                }
+            }
+        };
+
+        window.stopWebRTC = function () {
+            if (window.webrtcPeerConnection) {
+                try { window.webrtcPeerConnection.close(); } catch (e) {}
+                window.webrtcPeerConnection = null;
+            }
+        };
 
         // Global clipboard utility for streaming checklist
         window.copyIngestUrl = function (button) {
@@ -2900,6 +3085,18 @@
             </form>
         </div>
     </div>
+    <!-- Floating Action Button for Mobile App Download -->
+    <a href="/data/app-release.apk" download="telemetry_bridge.apk" id="download-fab"
+        style="position: fixed; bottom: 24px; left: 24px; z-index: 99999; display: flex; align-items: center; gap: 8px; padding: 12px 18px; background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #ffffff; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 12px; font-family: 'Inter', sans-serif; text-transform: uppercase; letter-spacing: 0.05em; box-shadow: 0 10px 25px -5px rgba(2, 132, 199, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.15) inset; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer;"
+        onmouseover="this.style.transform='translateY(-4px) scale(1.03)'; this.style.boxShadow='0 15px 30px -5px rgba(2, 132, 199, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.25) inset';"
+        onmouseout="this.style.transform='none'; this.style.boxShadow='0 10px 25px -5px rgba(2, 132, 199, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.15) inset';">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 1px 2px rgba(0,0,0,0.2));">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        <span>Download Mobile App</span>
+    </a>
 </body>
 
 </html>

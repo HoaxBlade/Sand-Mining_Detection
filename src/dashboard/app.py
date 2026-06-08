@@ -1407,6 +1407,12 @@ async def startup_event():
     # Pre-populate registered drones from database
     load_drones_from_db()
 
+    # Register static bypass token for telemetry bridge stream access
+    ACTIVE_SESSIONS["bypass_token"] = {
+        "username": "drone_pilot",
+        "role": "operator"
+    }
+
     #  Load YOLO model 
     # Priority: custom trained weights  generic YOLOv8n placeholder
     custom_weights = Path(__file__).resolve().parent.parent.parent / "models" / "weights" / "best.pt"
