@@ -57,6 +57,6 @@ To manage the headless service on the Jetson Nano, run the following:
 While the pipeline is running on the physical Jetson Nano drone board, you 
 can monitor its hardware temperatures and GPU usage by running:
 
-  tegrastats
+   tegrastats
 
 =============================================================================
