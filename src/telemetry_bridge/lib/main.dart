@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 
 void main() {
   runApp(const TelemetryBridgeApp());
@@ -56,6 +57,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   // RTMP Streaming variables
   bool _isRtmpStreaming = false;
+  bool _isCameraFullscreen = false;
   String _rtmpStatus = 'IDLE';
   final TextEditingController _rtmpController = TextEditingController();
 
@@ -275,7 +277,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final statusColor = _getStatusColor();
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: _isCameraFullscreen ? null : AppBar(
         title: Row(
           children: [
             Container(
@@ -336,10 +338,12 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        child: Column(
-          children: [
+      body: _isCameraFullscreen
+          ? _buildRawFeedMonitor()
+          : SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Column(
+                children: [
                   // Control switches panel
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -873,7 +877,6 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildRawFeedMonitor() {
     final double currentLat = _lat;
-    final double currentLon = _lon;
     final double currentAlt = _altitude;
     final double currentSpeed = _speed;
     final int currentBat = _battery;
@@ -888,16 +891,19 @@ class _DashboardPageState extends State<DashboardPage> {
     final bool isStreamActive = _isRtmpStreaming || _isSimulating;
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      height: 200,
+      margin: _isCameraFullscreen ? EdgeInsets.zero : const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      height: _isCameraFullscreen ? double.infinity : 200,
+      width: _isCameraFullscreen ? double.infinity : null,
       decoration: BoxDecoration(
         color: const Color(0xFF030712),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: _isRtmpStreaming ? const Color(0xFF10B981) : const Color(0xFF334155),
-          width: 1.5,
-        ),
-        boxShadow: _isRtmpStreaming ? [
+        borderRadius: _isCameraFullscreen ? BorderRadius.zero : BorderRadius.circular(12),
+        border: _isCameraFullscreen
+            ? null
+            : Border.all(
+                color: _isRtmpStreaming ? const Color(0xFF10B981) : const Color(0xFF334155),
+                width: 1.5,
+              ),
+        boxShadow: (!_isCameraFullscreen && _isRtmpStreaming) ? [
           BoxShadow(
             color: const Color(0xFF10B981).withValues(alpha: 0.15),
             blurRadius: 10,
@@ -906,7 +912,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ] : [],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: _isCameraFullscreen ? BorderRadius.zero : BorderRadius.circular(10),
         child: LayoutBuilder(
           builder: (context, constraints) => GestureDetector(
             behavior: HitTestBehavior.opaque,
@@ -924,13 +930,19 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
                 
                 // Native Camera View
-                if (_isDJIConnected)
-                  const Positioned.fill(
-                    child: AndroidView(
-                      viewType: 'sq.rogue.telemetry_bridge/dji_camera_view',
-                      creationParams: <String, dynamic>{},
-                      creationParamsCodec: StandardMessageCodec(),
-                    ),
+                if (_isDJIConnected || _isSimulating)
+                  Positioned.fill(
+                    child: defaultTargetPlatform == TargetPlatform.iOS
+                        ? const UiKitView(
+                            viewType: 'sq.rogue.telemetry_bridge/dji_camera_view',
+                            creationParams: <String, dynamic>{},
+                            creationParamsCodec: StandardMessageCodec(),
+                          )
+                        : const AndroidView(
+                            viewType: 'sq.rogue.telemetry_bridge/dji_camera_view',
+                            creationParams: <String, dynamic>{},
+                            creationParamsCodec: StandardMessageCodec(),
+                          ),
                   ),
                 
                 // horizon Custom Grid HUD
@@ -1140,40 +1152,90 @@ class _DashboardPageState extends State<DashboardPage> {
                     ),
                   ),
 
-                  // 3. Right Side DJI-Style Shutter/Record Button (Toggles RTMP stream!)
+                  // 3. Right Side DJI-Style Shutter/Record Button (Toggles RTMP stream!) and Fullscreen Toggle
                   Positioned(
                     right: 12,
                     top: 0,
                     bottom: 0,
                     child: Center(
-                      child: GestureDetector(
-                        onTap: _toggleRtmpStreaming,
-                        child: Container(
-                          width: 38,
-                          height: 38,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Colors.white,
-                              width: 2.0,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.3),
-                                blurRadius: 4,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          GestureDetector(
+                            onTap: _toggleRtmpStreaming,
+                            child: Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.white,
+                                  width: 2.0,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.3),
+                                    blurRadius: 4,
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                          padding: const EdgeInsets.all(3.0),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 250),
-                            decoration: BoxDecoration(
-                              color: _isRtmpStreaming ? const Color(0xFFEF4444) : Colors.white,
-                              shape: _isRtmpStreaming ? BoxShape.rectangle : BoxShape.circle,
-                              borderRadius: _isRtmpStreaming ? BorderRadius.circular(4) : null,
+                              padding: const EdgeInsets.all(3.0),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 250),
+                                decoration: BoxDecoration(
+                                  color: _isRtmpStreaming ? const Color(0xFFEF4444) : Colors.white,
+                                  shape: _isRtmpStreaming ? BoxShape.rectangle : BoxShape.circle,
+                                  borderRadius: _isRtmpStreaming ? BorderRadius.circular(4) : null,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
+                          const SizedBox(height: 12),
+                          // Fullscreen Toggle Button
+                          GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _isCameraFullscreen = !_isCameraFullscreen;
+                                if (_isCameraFullscreen) {
+                                  SystemChrome.setPreferredOrientations([
+                                    DeviceOrientation.landscapeLeft,
+                                  ]);
+                                  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+                                } else {
+                                  SystemChrome.setPreferredOrientations([
+                                    DeviceOrientation.portraitUp,
+                                  ]);
+                                  SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: SystemUiOverlay.values);
+                                }
+                              });
+                            },
+                            child: Container(
+                              width: 34,
+                              height: 34,
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.5),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.4),
+                                  width: 1.5,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.3),
+                                    blurRadius: 4,
+                                  ),
+                                ],
+                              ),
+                              child: Center(
+                                child: Icon(
+                                  _isCameraFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
