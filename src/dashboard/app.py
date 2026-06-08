@@ -547,14 +547,15 @@ def _yolo_inference_loop():
         if _yolo_model is not None:
             try:
                 # Detect person (0), car (2), motorcycle (3), bus (5), truck (7)
-                # OPTIMIZATION: Run YOLO at imgsz=1280 to capture tiny targets/humans from aerial heights!
+                # imgsz=640 keeps CPU inference under ~1s so the overlay stream
+                # never appears frozen after stream stop/restart cycles.
                 results = _yolo_model(
                     frame,
                     verbose=False,
                     classes=[0, 2, 3, 5, 7],
                     conf=0.30,
                     iou=0.45,
-                    imgsz=1280
+                    imgsz=640
                 )
                 overlay = results[0].plot()   # annotated BGR numpy array
                 

@@ -1430,6 +1430,34 @@
         document.getElementById('img-stream-raw').src = BACKEND_URL + 'stream/raw';
         document.getElementById('img-stream-overlay').src = BACKEND_URL + 'stream/overlay';
 
+        // Auto-reconnect the overlay MJPEG stream if the connection drops
+        (function () {
+            const overlayImg = document.getElementById('img-stream-overlay');
+
+            function reloadOverlay() {
+                // Bust cache so the browser opens a fresh MJPEG connection
+                const base = BASE_PATH + 'stream/overlay';
+                const drone = typeof currentDroneId !== 'undefined' && currentDroneId && currentDroneId !== 'default_drone'
+                    ? base + '?drone_id=' + encodeURIComponent(currentDroneId)
+                    : base;
+                overlayImg.src = drone + (drone.includes('?') ? '&' : '?') + '_t=' + Date.now();
+            }
+
+            // Reconnect on network error
+            overlayImg.onerror = function () {
+                setTimeout(reloadOverlay, 3000);
+            };
+
+            // Stale-frame watchdog: if the naturalWidth hasn't changed in 8s, reconnect
+            let _lastNW = 0;
+            setInterval(function () {
+                const nw = overlayImg.naturalWidth;
+                if (nw === _lastNW && overlayImg.src && !overlayImg.hidden) {
+                    reloadOverlay();
+                }
+                _lastNW = nw;
+            }, 8000);
+        })();
 
 
         // DOM Handles
