@@ -30,6 +30,7 @@ import dji.v5.manager.KeyManager
 import dji.sdk.keyvalue.key.FlightControllerKey
 import dji.sdk.keyvalue.key.BatteryKey
 import dji.sdk.keyvalue.key.CameraKey
+import dji.sdk.keyvalue.value.camera.CameraFocusMode
 import dji.sdk.keyvalue.value.common.CameraLensType
 import dji.sdk.keyvalue.value.common.DoublePoint2D
 import dji.sdk.keyvalue.value.common.LocationCoordinate3D
@@ -288,18 +289,34 @@ class MainActivity : FlutterActivity() {
 
     private fun tapFocus(normalizedX: Double, normalizedY: Double) {
         try {
+            val focusModeKey = KeyTools.createCameraKey(
+                CameraKey.KeyCameraFocusMode,
+                ComponentIndexType.LEFT_OR_MAIN,
+                CameraLensType.CAMERA_LENS_DEFAULT
+            )
             val focusKey = KeyTools.createCameraKey(
                 CameraKey.KeyCameraFocusTarget,
                 ComponentIndexType.LEFT_OR_MAIN,
                 CameraLensType.CAMERA_LENS_DEFAULT
             )
             val point = DoublePoint2D(normalizedX, normalizedY)
-            KeyManager.getInstance().setValue(focusKey, point, object : CommonCallbacks.CompletionCallback {
+            
+            // Set focus mode to AF (Auto Focus) to support tap-to-focus targeting
+            KeyManager.getInstance().setValue(focusModeKey, CameraFocusMode.AF, object : CommonCallbacks.CompletionCallback {
                 override fun onSuccess() {
-                    sendConsoleLog(String.format("[CAMERA] Tap-to-focus success at (%.2f, %.2f)", normalizedX, normalizedY))
+                    sendConsoleLog("[CAMERA] Set focus mode to AF successfully.")
+                    // Set focus target point
+                    KeyManager.getInstance().setValue(focusKey, point, object : CommonCallbacks.CompletionCallback {
+                        override fun onSuccess() {
+                            sendConsoleLog(String.format("[CAMERA] Tap-to-focus success at (%.2f, %.2f)", normalizedX, normalizedY))
+                        }
+                        override fun onFailure(error: IDJIError) {
+                            sendConsoleLog("[CAMERA] Tap-to-focus failed: ${error.description()}")
+                        }
+                    })
                 }
                 override fun onFailure(error: IDJIError) {
-                    sendConsoleLog("[CAMERA] Tap-to-focus failed: ${error.description()}")
+                    sendConsoleLog("[CAMERA] Failed to set focus mode to AF: ${error.description()}")
                 }
             })
         } catch (e: Exception) {
