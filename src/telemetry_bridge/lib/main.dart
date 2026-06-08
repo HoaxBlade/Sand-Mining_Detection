@@ -225,13 +225,18 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _sendTelemetryToServer() async {
-    if (_lat == 0.0 && _lon == 0.0) {
-      _addLog('Sync Skipped: Waiting for valid GPS coordinates...');
-      return;
+    // Always broadcast whatever data we have — do NOT block on GPS or battery.
+    // The dashboard will show 0,0 coordinates while GPS is acquiring, and 0%
+    // battery while the DJI battery key hasn't fired yet. Once real values
+    // arrive the next tick will send them automatically.
+    final bool gpsAcquiring = _lat == 0.0 && _lon == 0.0;
+    final bool batteryUnknown = _battery == -1;
+
+    if (gpsAcquiring) {
+      _addLog('Sync: GPS acquiring — broadcasting placeholder coordinates...');
     }
-    if (_battery == -1) {
-      _addLog('Sync Skipped: Waiting for battery telemetry...');
-      return;
+    if (batteryUnknown) {
+      _addLog('Sync: Battery data pending — broadcasting 0%...');
     }
 
     final payload = {
@@ -239,7 +244,7 @@ class _DashboardPageState extends State<DashboardPage> {
       'lon': _lon,
       'altitude': _altitude < 0 ? 0.0 : _altitude,
       'speed': _speed < 0 ? 0.0 : _speed / 3.6, // Server expects m/s, HUD converts back to km/h
-      'battery': _battery < 0 ? 0 : _battery,
+      'battery': batteryUnknown ? 0 : _battery,
     };
 
     try {
@@ -250,7 +255,9 @@ class _DashboardPageState extends State<DashboardPage> {
       );
 
       if (response.statusCode == 200) {
-        _addLog('Synced: ${_lat.toStringAsFixed(5)}, ${_lon.toStringAsFixed(5)} | Bat: $_battery% (Success)');
+        final locStr = gpsAcquiring ? 'GPS acquiring...' : '${_lat.toStringAsFixed(5)}, ${_lon.toStringAsFixed(5)}';
+        final batStr = batteryUnknown ? 'Bat: pending' : 'Bat: $_battery%';
+        _addLog('Synced: $locStr | $batStr (Success)');
       } else {
         _addLog('Server Error: Code ${response.statusCode}');
       }
