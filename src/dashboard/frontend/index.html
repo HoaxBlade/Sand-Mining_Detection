@@ -2169,9 +2169,15 @@
             });
 
             pc.ontrack = (event) => {
-                console.log('[WebRTC] Track received:', event.track.kind);
+                console.log('[WebRTC] Track received:', event.track.kind, 'ID:', event.track.id, 'Streams length:', event.streams.length);
                 if (videoEl && event.streams[0]) {
+                    console.log('[WebRTC] Attaching stream to video element:', videoEl.id);
                     videoEl.srcObject = event.streams[0];
+                    videoEl.play()
+                        .then(() => console.log('[WebRTC] play() started successfully for:', videoEl.id))
+                        .catch(err => console.warn("[WebRTC] play() failed/interrupted for:", videoEl.id, err));
+                } else {
+                    console.warn('[WebRTC] No video element or streams to attach to!', videoEl, event.streams);
                 }
             };
 
@@ -2203,6 +2209,7 @@
         let lastOverlayTime = -1;
         let rawStaleCount = 0;
         let overlayStaleCount = 0;
+        let connectionStartTime = 0;
 
         function startWebRtcWatchdog() {
             stopWebRtcWatchdog();
@@ -2219,6 +2226,22 @@
 
                 const videoRaw = document.getElementById('video-stream-raw');
                 const videoOverlay = document.getElementById('video-stream-overlay');
+
+                const timeSinceStart = Date.now() - connectionStartTime;
+                const rawCurrentTime = videoRaw ? videoRaw.currentTime : -1;
+                const overlayCurrentTime = videoOverlay ? videoOverlay.currentTime : -1;
+
+                console.log(`[WebRTC Watchdog] Check: Raw currentTime=${rawCurrentTime} (last=${lastRawTime}, staleCount=${rawStaleCount}), Overlay currentTime=${overlayCurrentTime} (last=${lastOverlayTime}, staleCount=${overlayStaleCount}), Time since start=${timeSinceStart}ms`);
+
+                // Check if we are still within the grace period (8 seconds) to allow connection to settle
+                if (timeSinceStart < 8000) {
+                    console.log('[WebRTC Watchdog] Within 8-second grace period. Resetting stale counts.');
+                    rawStaleCount = 0;
+                    overlayStaleCount = 0;
+                    if (videoRaw) lastRawTime = videoRaw.currentTime;
+                    if (videoOverlay) lastOverlayTime = videoOverlay.currentTime;
+                    return;
+                }
 
                 // Check raw stream if it is supposed to be showing
                 if (videoRaw && videoRaw.style.display !== 'none' && videoRaw.srcObject) {
@@ -2244,8 +2267,8 @@
                     overlayStaleCount = 0;
                 }
 
-                // If either is stale for 3 checks (approx 3 seconds), trigger a reconnect
-                if (rawStaleCount >= 3 || overlayStaleCount >= 3) {
+                // If either is stale for 4 checks (approx 4 seconds), trigger a reconnect
+                if (rawStaleCount >= 4 || overlayStaleCount >= 4) {
                     console.warn(`[WebRTC Watchdog] Detected stale feed (Raw stale count: ${rawStaleCount}, Overlay stale count: ${overlayStaleCount}). Reconnecting WebRTC...`);
                     rawStaleCount = 0;
                     overlayStaleCount = 0;
@@ -2271,6 +2294,9 @@
 
         async function initiateWebRtcConnections() {
             try {
+                connectionStartTime = Date.now();
+                console.log('[WebRTC] Starting connection at:', new Date(connectionStartTime).toISOString());
+
                 const backendHost = new URL(BACKEND_URL).hostname;
                 const protocol   = window.location.protocol;
                 const streamKey  = currentDroneId === 'default_drone' ? 'drone' : currentDroneId;
