@@ -2198,6 +2198,122 @@
             return pc;
         }
 
+        let webrtcWatchdogInterval = null;
+        let lastRawTime = -1;
+        let lastOverlayTime = -1;
+        let rawStaleCount = 0;
+        let overlayStaleCount = 0;
+
+        function startWebRtcWatchdog() {
+            stopWebRtcWatchdog();
+            lastRawTime = -1;
+            lastOverlayTime = -1;
+            rawStaleCount = 0;
+            overlayStaleCount = 0;
+
+            webrtcWatchdogInterval = setInterval(() => {
+                if (!_webrtcActive) {
+                    stopWebRtcWatchdog();
+                    return;
+                }
+
+                const videoRaw = document.getElementById('video-stream-raw');
+                const videoOverlay = document.getElementById('video-stream-overlay');
+
+                // Check raw stream if it is supposed to be showing
+                if (videoRaw && videoRaw.style.display !== 'none' && videoRaw.srcObject) {
+                    if (videoRaw.currentTime === lastRawTime) {
+                        rawStaleCount++;
+                    } else {
+                        rawStaleCount = 0;
+                        lastRawTime = videoRaw.currentTime;
+                    }
+                } else {
+                    rawStaleCount = 0;
+                }
+
+                // Check overlay stream if it is supposed to be showing
+                if (videoOverlay && videoOverlay.style.display !== 'none' && videoOverlay.srcObject) {
+                    if (videoOverlay.currentTime === lastOverlayTime) {
+                        overlayStaleCount++;
+                    } else {
+                        overlayStaleCount = 0;
+                        lastOverlayTime = videoOverlay.currentTime;
+                    }
+                } else {
+                    overlayStaleCount = 0;
+                }
+
+                // If either is stale for 3 checks (approx 3 seconds), trigger a reconnect
+                if (rawStaleCount >= 3 || overlayStaleCount >= 3) {
+                    console.warn(`[WebRTC Watchdog] Detected stale feed (Raw stale count: ${rawStaleCount}, Overlay stale count: ${overlayStaleCount}). Reconnecting WebRTC...`);
+                    rawStaleCount = 0;
+                    overlayStaleCount = 0;
+                    
+                    window.stopWebRTC();
+                    setWebRtcUiState(false, true); // set UI back to connecting
+                    
+                    setTimeout(() => {
+                        if (_webrtcActive) {
+                            initiateWebRtcConnections();
+                        }
+                    }, 1000);
+                }
+            }, 1000);
+        }
+
+        function stopWebRtcWatchdog() {
+            if (webrtcWatchdogInterval) {
+                clearInterval(webrtcWatchdogInterval);
+                webrtcWatchdogInterval = null;
+            }
+        }
+
+        async function initiateWebRtcConnections() {
+            try {
+                const backendHost = new URL(BACKEND_URL).hostname;
+                const protocol   = window.location.protocol;
+                const streamKey  = currentDroneId === 'default_drone' ? 'drone' : currentDroneId;
+                
+                const whepUrlRaw      = `${protocol}//${backendHost}:8889/live/${streamKey}/whep`;
+                const whepUrlOverlay  = `${protocol}//${backendHost}:8889/live/${streamKey}_overlay/whep`;
+
+                console.log(`[WebRTC] Connecting to WHEP endpoints:\nRaw: ${whepUrlRaw}\nOverlay: ${whepUrlOverlay}`);
+
+                const pcRaw = await connectWhep(whepUrlRaw, document.getElementById('video-stream-raw'));
+                window.webrtcPeerConnectionRaw = pcRaw;
+
+                pcRaw.onconnectionstatechange = () => {
+                    console.log('[WebRTC Raw] Connection state:', pcRaw.connectionState);
+                    if (pcRaw.connectionState === 'connected') {
+                        setWebRtcUiState(true);
+                        showWebRtcToast('✓ WebRTC low-latency feed active');
+                    } else if (['failed', 'disconnected', 'closed'].includes(pcRaw.connectionState)) {
+                        if (_webrtcActive) {
+                            console.warn('[WebRTC Raw] Connection lost, reverting to MJPEG…');
+                            _webrtcActive = false;
+                            window.stopWebRTC();
+                            setWebRtcUiState(false);
+                            showWebRtcToast('⚠ WebRTC stream dropped. Reverted to MJPEG feed.', true);
+                        }
+                    }
+                };
+
+                const pcOverlay = await connectWhep(whepUrlOverlay, document.getElementById('video-stream-overlay'));
+                window.webrtcPeerConnectionOverlay = pcOverlay;
+
+                console.log('[WebRTC] WHEP handshakes complete — awaiting ICE connection…');
+                startWebRtcWatchdog();
+
+            } catch (err) {
+                console.error('[WebRTC ERROR]', err);
+                _webrtcActive = false;
+                window.stopWebRTC();
+                setWebRtcUiState(false);
+                showWebRtcToast(`✗ WebRTC failed: ${err.message}`, true);
+            }
+        }
+
         window.toggleWebRTC = async function () {
             if (_webrtcActive) {
                 // --- Turn OFF ---
@@ -2209,52 +2325,12 @@
                 // --- Turn ON ---
                 _webrtcActive = true;
                 setWebRtcUiState(false, true); // amber "connecting" state
-
-                try {
-                    const backendHost = new URL(BACKEND_URL).hostname;
-                    const protocol   = window.location.protocol;
-                    const streamKey  = currentDroneId === 'default_drone' ? 'drone' : currentDroneId;
-                    
-                    const whepUrlRaw      = `${protocol}//${backendHost}:8889/live/${streamKey}/whep`;
-                    const whepUrlOverlay  = `${protocol}//${backendHost}:8889/live/${streamKey}_overlay/whep`;
-
-                    console.log(`[WebRTC] Connecting to WHEP endpoints:\nRaw: ${whepUrlRaw}\nOverlay: ${whepUrlOverlay}`);
-
-                    const pcRaw = await connectWhep(whepUrlRaw, document.getElementById('video-stream-raw'));
-                    window.webrtcPeerConnectionRaw = pcRaw;
-
-                    pcRaw.onconnectionstatechange = () => {
-                        console.log('[WebRTC Raw] Connection state:', pcRaw.connectionState);
-                        if (pcRaw.connectionState === 'connected') {
-                            setWebRtcUiState(true);
-                            showWebRtcToast('✓ WebRTC low-latency feed active');
-                        } else if (['failed', 'disconnected', 'closed'].includes(pcRaw.connectionState)) {
-                            if (_webrtcActive) {
-                                console.warn('[WebRTC Raw] Connection lost, reverting to MJPEG…');
-                                _webrtcActive = false;
-                                window.stopWebRTC();
-                                setWebRtcUiState(false);
-                                showWebRtcToast('⚠ WebRTC stream dropped. Reverted to MJPEG feed.', true);
-                            }
-                        }
-                    };
-
-                    const pcOverlay = await connectWhep(whepUrlOverlay, document.getElementById('video-stream-overlay'));
-                    window.webrtcPeerConnectionOverlay = pcOverlay;
-
-                    console.log('[WebRTC] WHEP handshakes complete — awaiting ICE connection…');
-
-                } catch (err) {
-                    console.error('[WebRTC ERROR]', err);
-                    _webrtcActive = false;
-                    window.stopWebRTC();
-                    setWebRtcUiState(false);
-                    showWebRtcToast(`✗ WebRTC failed: ${err.message}`, true);
-                }
+                await initiateWebRtcConnections();
             }
         };
 
         window.stopWebRTC = function () {
+            stopWebRtcWatchdog();
             if (window.webrtcPeerConnectionRaw) {
                 try { window.webrtcPeerConnectionRaw.close(); } catch (e) {}
                 window.webrtcPeerConnectionRaw = null;
