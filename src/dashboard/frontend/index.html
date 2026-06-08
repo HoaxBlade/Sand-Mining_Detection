@@ -2231,11 +2231,8 @@
                 const rawCurrentTime = videoRaw ? videoRaw.currentTime : -1;
                 const overlayCurrentTime = videoOverlay ? videoOverlay.currentTime : -1;
 
-                console.log(`[WebRTC Watchdog] Check: Raw currentTime=${rawCurrentTime} (last=${lastRawTime}, staleCount=${rawStaleCount}), Overlay currentTime=${overlayCurrentTime} (last=${lastOverlayTime}, staleCount=${overlayStaleCount}), Time since start=${timeSinceStart}ms`);
-
                 // Check if we are still within the grace period (8 seconds) to allow connection to settle
                 if (timeSinceStart < 8000) {
-                    console.log('[WebRTC Watchdog] Within 8-second grace period. Resetting stale counts.');
                     rawStaleCount = 0;
                     overlayStaleCount = 0;
                     if (videoRaw) lastRawTime = videoRaw.currentTime;
