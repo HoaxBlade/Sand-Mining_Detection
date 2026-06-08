@@ -247,12 +247,12 @@ class FreshFrameGrabber:
     def _grab_loop(self):
         while self.running:
             ret, frame = self.cap.read()
+            with self.lock:
+                self.ret = ret
+                if ret:
+                    self.latest_frame = frame
             if not ret:
                 time.sleep(0.01)
-                continue
-            with self.lock:
-                self.latest_frame = frame
-                self.ret = ret
 
     def read(self):
         with self.lock:
