@@ -448,7 +448,7 @@ class DjiCameraView(context: Context, private val mainActivity: MainActivity) : 
                     surface,
                     surfaceView.width,
                     surfaceView.height,
-                    dji.v5.manager.interfaces.ICameraStreamManager.ScaleType.CENTER_INSIDE
+                    dji.v5.manager.interfaces.ICameraStreamManager.ScaleType.CENTER_CROP
                 )
             } catch (e: Exception) {
                 mainActivity.sendConsoleLog("[VIDEO ERROR] Failed to bind surface: ${e.message}")
@@ -456,7 +456,22 @@ class DjiCameraView(context: Context, private val mainActivity: MainActivity) : 
         }
     }
 
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        val surface = holder.surface
+        if (surface != null) {
+            try {
+                MediaDataCenter.getInstance().cameraStreamManager.putCameraStreamSurface(
+                    ComponentIndexType.LEFT_OR_MAIN,
+                    surface,
+                    width,
+                    height,
+                    dji.v5.manager.interfaces.ICameraStreamManager.ScaleType.CENTER_CROP
+                )
+            } catch (e: Exception) {
+                mainActivity.sendConsoleLog("[VIDEO ERROR] Failed to update surface dimensions: ${e.message}")
+            }
+        }
+    }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         try {
