@@ -654,6 +654,19 @@
         <div style="display:flex; flex-direction:column; align-items:flex-end; gap:8px;">
             <!-- Operator profile and Logout -->
             <div style="display:flex; gap:10px; align-items:center;">
+                <!-- Mobile App Download Link -->
+                <a href="/data/app-release.apk" download="telemetry_bridge.apk" class="map-btn"
+                    style="padding: 4px 10px; font-size: 11px; margin: 0; background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.35); color: #38bdf8; border-radius: 6px; cursor: pointer; font-family: inherit; font-weight: 600; text-decoration: none; display: flex; align-items: center; gap: 6px; transition: all 0.2s;"
+                    onmouseover="this.style.background='rgba(56, 189, 248, 0.25)'; this.style.borderColor='rgba(56, 189, 248, 0.5)';"
+                    onmouseout="this.style.background='rgba(56, 189, 248, 0.15)'; this.style.borderColor='rgba(56, 189, 248, 0.35)';">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7 10 12 15 17 10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    Download Mobile App
+                </a>
+
                 <div class="chip"
                     style="background: rgba(16, 185, 129, 0.08); border-color: rgba(16, 185, 129, 0.15); color: #10b981; display: flex; align-items: center; gap: 6px;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
@@ -3085,18 +3098,6 @@
             </form>
         </div>
     </div>
-    <!-- Floating Action Button for Mobile App Download -->
-    <a href="/data/app-release.apk" download="telemetry_bridge.apk" id="download-fab"
-        style="position: fixed; bottom: 24px; left: 24px; z-index: 99999; display: flex; align-items: center; gap: 8px; padding: 12px 18px; background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #ffffff; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 12px; font-family: 'Inter', sans-serif; text-transform: uppercase; letter-spacing: 0.05em; box-shadow: 0 10px 25px -5px rgba(2, 132, 199, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.15) inset; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer;"
-        onmouseover="this.style.transform='translateY(-4px) scale(1.03)'; this.style.boxShadow='0 15px 30px -5px rgba(2, 132, 199, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.25) inset';"
-        onmouseout="this.style.transform='none'; this.style.boxShadow='0 10px 25px -5px rgba(2, 132, 199, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.15) inset';">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 1px 2px rgba(0,0,0,0.2));">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-            <polyline points="7 10 12 15 17 10"></polyline>
-            <line x1="12" y1="15" x2="12" y2="3"></line>
-        </svg>
-        <span>Download Mobile App</span>
-    </a>
 </body>
 
 </html>
