@@ -639,6 +639,9 @@ def _yolo_inference_loop():
                     imgsz=640
                 )
                 overlay = results[0].plot()   # annotated BGR numpy array
+                if len(results[0].boxes) > 0:
+                    detected_classes = [results[0].names[int(box.cls[0].item())] for box in results[0].boxes]
+                    logger.info("YOLO Detections: {}".format(detected_classes))
                 
                 # Downscale the annotated overlay for web streaming to save bandwidth
                 h_ov, w_ov = overlay.shape[:2]
