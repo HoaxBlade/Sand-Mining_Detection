@@ -553,7 +553,7 @@ def _yolo_inference_loop():
     This guarantees that the raw stream remains high-FPS (30 FPS), and the AI stream
     never falls behind real-time or plays in slow-motion.
     """
-    global latest_bgr_frame, latest_overlay_frame, latest_webcam_detections, _yolo_model, local_webcam_mode, global_overlay_streamer
+    global latest_bgr_frame, latest_overlay_frame, latest_webcam_detections, latest_frame_width, latest_frame_height, _yolo_model, local_webcam_mode, global_overlay_streamer
     try:
         import cv2
     except ImportError:
@@ -640,28 +640,32 @@ def _yolo_inference_loop():
                 latest_overlay_frame = obuf.tobytes()
                 notify_overlay_frame()
 
+                # Update current frame dimensions for coordinate scaling in clients
+                h_frame, w_frame = frame.shape[:2]
+                latest_frame_width = w_frame
+                latest_frame_height = h_frame
+
                 # Extract and store bounding box details globally for hybrid telemetry mapping
-                # But ONLY trigger incidents when inside geofence start area!
+                # But ONLY trigger incidents when inside geofence start area (checked in process_gps_data)!
                 active_dets = []
-                if is_at_starting_spot():
-                    if len(results[0].boxes) > 0:
-                        for box in results[0].boxes:
-                            coords = box.xyxy[0].tolist()
-                            conf = float(box.conf[0].item())
-                            cls_id = int(box.cls[0].item())
-                            
-                            # Map YOLO class IDs to standard names
-                            cls_map = {0: 'person', 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
-                            class_name = cls_map.get(cls_id, 'jcb')
-                            
-                            active_dets.append({
-                                'class_name': class_name,
-                                'confidence': conf,
-                                'bbox_x_min': int(coords[0]),
-                                'bbox_y_min': int(coords[1]),
-                                'bbox_x_max': int(coords[2]),
-                                'bbox_y_max': int(coords[3])
-                            })
+                if len(results[0].boxes) > 0:
+                    for box in results[0].boxes:
+                        coords = box.xyxy[0].tolist()
+                        conf = float(box.conf[0].item())
+                        cls_id = int(box.cls[0].item())
+                        
+                        # Map YOLO class IDs to standard names
+                        cls_map = {0: 'person', 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
+                        class_name = cls_map.get(cls_id, 'jcb')
+                        
+                        active_dets.append({
+                            'class_name': class_name,
+                            'confidence': conf,
+                            'bbox_x_min': int(coords[0]),
+                            'bbox_y_min': int(coords[1]),
+                            'bbox_x_max': int(coords[2]),
+                            'bbox_y_max': int(coords[3])
+                        })
                 latest_webcam_detections = active_dets
             except Exception as exc:
                 logger.error("YOLO inference error: {}".format(exc))
@@ -1106,6 +1110,8 @@ async def notify_drone_subscribers(drone_id: str, stream_type: str, frame_bytes:
 latest_raw_frame = b""
 latest_overlay_frame = b""
 latest_webcam_detections = []
+latest_frame_width = 1280
+latest_frame_height = 720
 use_synthetic_video = True
 
 # Holds the loaded YOLO model  set once at startup, used in _video_capture_loop
@@ -1455,7 +1461,7 @@ async def _webcam_telemetry_simulation_loop():
             #  Process active webcam detections mapped to this GPS location! 
             active_dets = list(latest_webcam_detections)
 
-            if active_dets:
+            if active_dets and is_at_starting_spot():
                 mapped_dets = []
                 for idx, det in enumerate(active_dets):
                     # Add a tiny random coordinate offset on the ground (e.g. up to 30m)
@@ -1762,7 +1768,12 @@ async def receive_edge_sync(data: dict, drone_id: Optional[str] = Query(None)):
 
     # Broadcast to all open dashboards or route to dynamic subscribers
     await broadcast_drone_data(effective_drone_id, data)
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "detections": latest_webcam_detections,
+        "frame_width": latest_frame_width,
+        "frame_height": latest_frame_height
+    }
 
 # REST APIs for historical query & filtering
 
