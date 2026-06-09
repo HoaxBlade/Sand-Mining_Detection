@@ -331,23 +331,31 @@ def _video_capture_loop():
             current_source = target_source
             use_synthetic_video = False
 
-            if target_source == "dummy":
+            # Map external domain/IP to localhost for backend stream pull
+            resolved_source = target_source
+            if isinstance(resolved_source, str):
+                if "sandmining.nielitbhubaneswar.in" in resolved_source:
+                    resolved_source = resolved_source.replace("sandmining.nielitbhubaneswar.in", "127.0.0.1")
+                elif "187.127.142.58" in resolved_source:
+                    resolved_source = resolved_source.replace("187.127.142.58", "127.0.0.1")
+
+            if resolved_source == "dummy":
                 logger.info("  New source is dummy. Falling back to synthetic simulation mode.")
                 use_synthetic_video = True
             else:
                 try:
-                    is_rtsp = isinstance(target_source, str) and (
-                        target_source.startswith("rtsp://") or 
-                        target_source.startswith("rtmp://") or 
-                        target_source.startswith("http://") or 
-                        target_source.startswith("https://")
+                    is_rtsp = isinstance(resolved_source, str) and (
+                        resolved_source.startswith("rtsp://") or 
+                        resolved_source.startswith("rtmp://") or 
+                        resolved_source.startswith("http://") or 
+                        resolved_source.startswith("https://")
                     )
-                    is_file = isinstance(target_source, str) and not is_rtsp
+                    is_file = isinstance(resolved_source, str) and not is_rtsp
 
                     if is_rtsp:
                         # Build low-latency FFMPEG options: disable buffering, reduce probe size/duration
                         opt_list = []
-                        if target_source.startswith("rtsp://"):
+                        if resolved_source.startswith("rtsp://"):
                             opt_list.append(f"rtsp_transport;{RTSP_TRANSPORT}")
                         
                         # Add socket timeout (3 seconds = 3000000 microseconds) to prevent blocking hangs
@@ -359,18 +367,18 @@ def _video_capture_loop():
                         
                         opts = "|".join(opt_list)
                         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = opts
-                        logger.info("  Connecting to dynamic drone stream: {} (options: {})".format(target_source, opts))
-                        cap = cv2.VideoCapture(target_source, cv2.CAP_FFMPEG)
+                        logger.info("  Connecting to dynamic drone stream: {} (options: {})".format(resolved_source, opts))
+                        cap = cv2.VideoCapture(resolved_source, cv2.CAP_FFMPEG)
                         if cap is not None and cap.isOpened():
                             # Set internal buffer size to 1 to prevent frame queuing lag
                             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                             grabber = FreshFrameGrabber(cap)
                     elif is_file:
-                        logger.info("  Opening dynamic video file: {}...".format(target_source))
-                        cap = cv2.VideoCapture(target_source)
+                        logger.info("  Opening dynamic video file: {}...".format(resolved_source))
+                        cap = cv2.VideoCapture(resolved_source)
                     else:
-                        logger.info("  Starting dynamic webcam camera index {}...".format(target_source))
-                        cap = cv2.VideoCapture(target_source)
+                        logger.info("  Starting dynamic webcam camera index {}...".format(resolved_source))
+                        cap = cv2.VideoCapture(resolved_source)
                         if cap is not None and cap.isOpened():
                             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -383,7 +391,7 @@ def _video_capture_loop():
                     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                     global_video_w = w if w > 0 else 1280
                     global_video_h = h if h > 0 else 720
-                    source_label = "RTSP dynamic stream" if is_rtsp else f"Camera index {target_source}"
+                    source_label = "RTSP dynamic stream" if is_rtsp else f"Camera index {resolved_source}"
                     logger.info("  [SUCCESS] {} dynamic swapped successfully at {}x{}".format(source_label, global_video_w, global_video_h))
 
                 except Exception as e:
