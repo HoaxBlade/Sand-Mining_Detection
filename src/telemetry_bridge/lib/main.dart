@@ -48,6 +48,22 @@ class _DashboardPageState extends State<DashboardPage> {
   bool _isDJIConnected = false;
   final String _serverUrl = 'https://sandmining.nielitbhubaneswar.in/api/edge/sync';
 
+  // Cloud AI & Model Selection variables
+  bool _isAiDetectionEnabled = false;
+  List<String> _availableModels = ['yolov8n.pt'];
+  String _selectedModel = 'yolov8n.pt';
+  bool _isLoadingModels = false;
+
+  // Extract base URL dynamically from _serverUrl
+  String get _baseUrl {
+    try {
+      final uri = Uri.parse(_serverUrl);
+      return '${uri.scheme}://${uri.host}${uri.hasPort ? ":${uri.port}" : ""}';
+    } catch (_) {
+      return 'https://sandmining.nielitbhubaneswar.in';
+    }
+  }
+
   // Telemetry variables (boot state: waiting/unacquired)
   double _lat = 0.0;
   double _lon = 0.0;
@@ -81,6 +97,93 @@ class _DashboardPageState extends State<DashboardPage> {
     _addLog('Target Server: $_serverUrl');
     _startTelemetryLoop();
     _setupPlatformChannel();
+    // Fetch cloud models and config on boot
+    _fetchCloudModelsAndConfig();
+  }
+
+  Future<void> _fetchCloudModelsAndConfig() async {
+    if (_isLoadingModels) return;
+    setState(() {
+      _isLoadingModels = true;
+    });
+    _addLog('[Cloud AI] Fetching available models & flight configuration...');
+
+    try {
+      // 1. Fetch available models
+      final modelsResponse = await http.get(Uri.parse('$_baseUrl/api/model/list')).timeout(const Duration(seconds: 4));
+      
+      List<String> fetchedModels = ['yolov8n.pt'];
+      if (modelsResponse.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(modelsResponse.body);
+        if (data.containsKey('models')) {
+          final List<dynamic> modelList = data['models'];
+          fetchedModels = modelList.map((m) => m['filename'] as String).toList();
+        }
+      } else {
+        _addLog('[Cloud AI WARNING] Failed to list models: Code ${modelsResponse.statusCode}');
+      }
+
+      // 2. Fetch current flight config
+      final configResponse = await http.get(Uri.parse('$_baseUrl/api/flight/config')).timeout(const Duration(seconds: 4));
+      
+      bool remoteDetectionEnabled = _isAiDetectionEnabled;
+      String remoteActiveModel = _selectedModel;
+      
+      if (configResponse.statusCode == 200) {
+        final Map<String, dynamic> config = jsonDecode(configResponse.body);
+        remoteDetectionEnabled = config['detection_enabled'] ?? false;
+        remoteActiveModel = config['active_model'] ?? 'yolov8n.pt';
+        _addLog('[Cloud AI] Sync complete. Active Model: $remoteActiveModel | Detection: $remoteDetectionEnabled');
+      } else {
+        _addLog('[Cloud AI WARNING] Failed to get config: Code ${configResponse.statusCode}');
+      }
+
+      setState(() {
+        _availableModels = fetchedModels;
+        _isAiDetectionEnabled = remoteDetectionEnabled;
+        if (_availableModels.contains(remoteActiveModel)) {
+          _selectedModel = remoteActiveModel;
+        } else if (_availableModels.isNotEmpty) {
+          _selectedModel = _availableModels.first;
+        }
+      });
+    } catch (e) {
+      _addLog('[Cloud AI ERROR] Sync failed: Connection timed out');
+    } finally {
+      setState(() {
+        _isLoadingModels = false;
+      });
+    }
+  }
+
+  Future<void> _updateCloudFlightConfig({bool? detectionEnabled, String? activeModel}) async {
+    final targetDetection = detectionEnabled ?? _isAiDetectionEnabled;
+    final targetModel = activeModel ?? _selectedModel;
+
+    _addLog('[Cloud AI] Updating config: detection=$targetDetection, model=$targetModel...');
+
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/flight/config'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'detection_enabled': targetDetection,
+          'active_model': targetModel,
+        }),
+      ).timeout(const Duration(seconds: 4));
+
+      if (response.statusCode == 200) {
+        setState(() {
+          _isAiDetectionEnabled = targetDetection;
+          _selectedModel = targetModel;
+        });
+        _addLog('[Cloud AI] Config successfully updated and synced.');
+      } else {
+        _addLog('[Cloud AI ERROR] Update failed: Code ${response.statusCode}');
+      }
+    } catch (e) {
+      _addLog('[Cloud AI ERROR] Update failed: Connection timed out');
+    }
   }
 
   void _setupPlatformChannel() {
@@ -407,6 +510,98 @@ class _DashboardPageState extends State<DashboardPage> {
                     },
                     activeThumbColor: const Color(0xFF10B981),
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  margin: EdgeInsets.zero,
+                  color: const Color(0xFF1E293B),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SwitchListTile(
+                          title: const Text(
+                            'Cloud AI Detection',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                          ),
+                          subtitle: const Text(
+                            'Enable server-side YOLO surveillance on the live video feed',
+                            style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          value: _isAiDetectionEnabled,
+                          onChanged: (val) {
+                            _updateCloudFlightConfig(detectionEnabled: val);
+                          },
+                          activeThumbColor: const Color(0xFFA855F7), // Purple/indigo for AI
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                        if (_isAiDetectionEnabled) ...[
+                          const Divider(color: Color(0xFF334155), height: 16),
+                          Row(
+                            children: [
+                              const Icon(Icons.psychology, color: Color(0xFFA855F7), size: 18),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'Active YOLO Model:',
+                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Container(
+                                  height: 38,
+                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF0F172A),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(color: const Color(0xFF334155)),
+                                  ),
+                                  child: DropdownButtonHideUnderline(
+                                    child: DropdownButton<String>(
+                                      value: _availableModels.contains(_selectedModel)
+                                          ? _selectedModel
+                                          : (_availableModels.isNotEmpty ? _availableModels.first : 'yolov8n.pt'),
+                                      dropdownColor: const Color(0xFF0F172A),
+                                      style: const TextStyle(color: Colors.white, fontSize: 12, fontFamily: 'monospace'),
+                                      icon: const Icon(Icons.arrow_drop_down, color: Colors.grey),
+                                      isExpanded: true,
+                                      onChanged: (String? newVal) {
+                                        if (newVal != null) {
+                                          _updateCloudFlightConfig(activeModel: newVal);
+                                        }
+                                      },
+                                      items: _availableModels.map<DropdownMenuItem<String>>((String value) {
+                                        return DropdownMenuItem<String>(
+                                          value: value,
+                                          child: Text(value),
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              _isLoadingModels
+                                  ? const SizedBox(
+                                      width: 32,
+                                      height: 32,
+                                      child: Padding(
+                                        padding: EdgeInsets.all(6.0),
+                                        child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFA855F7)),
+                                      ),
+                                    )
+                                  : IconButton(
+                                      icon: const Icon(Icons.sync_sharp, color: Color(0xFFA855F7), size: 20),
+                                      onPressed: _fetchCloudModelsAndConfig,
+                                      tooltip: 'Sync Models & Config',
+                                    ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: 8),

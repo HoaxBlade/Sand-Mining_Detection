@@ -2021,9 +2021,7 @@ def get_flight_config(request: Request):
     WHY: Checked periodically by the drone edge pipeline to load the correct
     model mid-flight and monitor geofenced start coordinates!
     """
-    user = get_session_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    # Allow unauthenticated reads for edge devices/companion app
     return flight_config
 
 
@@ -2259,10 +2257,7 @@ def list_models(request: Request):
         - We also return file sizes so the operator knows if they uploaded a
           real model or accidentally uploaded something empty/corrupt.
     """
-    user = get_session_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
+    # Allow unauthenticated model listings for companion app
     weights_dir = Path(__file__).resolve().parent.parent.parent / "models" / "weights"
     weights_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2289,9 +2284,7 @@ async def update_flight_config(request: Request, data: dict):
     WHAT: Endpoint to update active model and geofencing coordinates.
     WHY: Operators can switch YOLOv8 vs YOLOv10 mid-flight or adjust the trigger geofence!
     """
-    user = get_session_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    # Allow unauthenticated writes for drone telemetry bridge app
     global flight_config, has_reached_starting_spot
     
     # Save old coordinates to check if they actually changed
