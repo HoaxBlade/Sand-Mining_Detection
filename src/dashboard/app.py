@@ -675,7 +675,7 @@ def _yolo_inference_loop():
                             })
                 latest_webcam_detections = active_dets
             except Exception as exc:
-                logger.debug("YOLO inference error: {}".format(exc))
+                logger.error("YOLO inference error: {}".format(exc))
                 # Fallback to raw frame on inference error
                 h_ov, w_ov = frame.shape[:2]
                 if w_ov > 854 or h_ov > 480:
