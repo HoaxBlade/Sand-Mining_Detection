@@ -3184,6 +3184,11 @@
         checkAuthStatus();
         fetchDrones();
         connectWebSocket();
+
+        // Enable low-latency WebRTC feed by default on application load
+        _webrtcActive = true;
+        setWebRtcUiState(false, true); // Set to connecting state
+        initiateWebRtcConnections();
     </script>
 
     <!-- Add Drone Modal -->
