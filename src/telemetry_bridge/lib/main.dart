@@ -53,6 +53,9 @@ class _DashboardPageState extends State<DashboardPage> {
   List<String> _availableModels = ['yolov8n.pt'];
   String _selectedModel = 'yolov8n.pt';
   bool _isLoadingModels = false;
+  List<Map<String, dynamic>> _detections = [];
+  int _frameWidth = 1280;
+  int _frameHeight = 720;
 
   // Extract base URL dynamically from _serverUrl
   String get _baseUrl {
@@ -176,6 +179,9 @@ class _DashboardPageState extends State<DashboardPage> {
         setState(() {
           _isAiDetectionEnabled = targetDetection;
           _selectedModel = targetModel;
+          if (!targetDetection) {
+            _detections.clear();
+          }
         });
         _addLog('[Cloud AI] Config successfully updated and synced.');
       } else {
@@ -361,6 +367,25 @@ class _DashboardPageState extends State<DashboardPage> {
         final locStr = gpsAcquiring ? 'GPS acquiring...' : '${_lat.toStringAsFixed(5)}, ${_lon.toStringAsFixed(5)}';
         final batStr = batteryUnknown ? 'Bat: pending' : 'Bat: $_battery%';
         _addLog('Synced: $locStr | $batStr (Success)');
+
+        if (_isAiDetectionEnabled) {
+          try {
+            final Map<String, dynamic> data = jsonDecode(response.body);
+            if (data.containsKey('detections')) {
+              setState(() {
+                _detections = List<Map<String, dynamic>>.from(data['detections']);
+                _frameWidth = data['frame_width'] ?? 1280;
+                _frameHeight = data['frame_height'] ?? 720;
+              });
+            }
+          } catch (_) {
+            // Ignore format exceptions
+          }
+        } else {
+          setState(() {
+            _detections.clear();
+          });
+        }
       } else {
         _addLog('Server Error: Code ${response.statusCode}');
       }
@@ -505,7 +530,12 @@ class _DashboardPageState extends State<DashboardPage> {
                     subtitle: const Text('Broadcast live coordinates and battery to the dashboard', style: TextStyle(fontSize: 11, color: Colors.grey)),
                     value: _isBroadcasting,
                     onChanged: (val) {
-                      setState(() => _isBroadcasting = val);
+                      setState(() {
+                        _isBroadcasting = val;
+                        if (!val) {
+                          _detections.clear();
+                        }
+                      });
                       _addLog('Cloud telemetry broadcast ${val ? "ACTIVATED" : "DEACTIVATED"}');
                     },
                     activeThumbColor: const Color(0xFF10B981),
@@ -1153,6 +1183,20 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ),
 
+                // Real-time AI bounding box overlay
+                if ((_isDJIConnected || _isSimulating) && _isAiDetectionEnabled && _detections.isNotEmpty)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(
+                        painter: _BoundingBoxPainter(
+                          detections: _detections,
+                          frameWidth: _frameWidth,
+                          frameHeight: _frameHeight,
+                        ),
+                      ),
+                    ),
+                  ),
+
                 // CRT / Scanline effect
                 Positioned.fill(
                   child: IgnorePointer(
@@ -1650,5 +1694,68 @@ class _HUDGridPainter extends CustomPainter {
     return oldDelegate.horizonOffset != horizonOffset || 
            oldDelegate.rollAngle != rollAngle || 
            oldDelegate.isActive != isActive;
+  }
+}
+
+class _BoundingBoxPainter extends CustomPainter {
+  final List<Map<String, dynamic>> detections;
+  final int frameWidth;
+  final int frameHeight;
+
+  _BoundingBoxPainter({
+    required this.detections,
+    required this.frameWidth,
+    required this.frameHeight,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width == 0 || size.height == 0 || frameWidth == 0 || frameHeight == 0) return;
+
+    final double scaleX = size.width / frameWidth;
+    final double scaleY = size.height / frameHeight;
+
+    final paintBox = Paint()
+      ..color = const Color(0xFFEF4444) // Neon/vibrant Red for bounding box
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+
+    final textPainter = TextPainter(
+      textDirection: TextDirection.ltr,
+    );
+
+    for (final det in detections) {
+      final double xMin = (det['bbox_x_min'] as num).toDouble() * scaleX;
+      final double yMin = (det['bbox_y_min'] as num).toDouble() * scaleY;
+      final double xMax = (det['bbox_x_max'] as num).toDouble() * scaleX;
+      final double yMax = (det['bbox_y_max'] as num).toDouble() * scaleY;
+
+      final rect = Rect.fromLTRB(xMin, yMin, xMax, yMax);
+      canvas.drawRect(rect, paintBox);
+
+      final String label = '${det['class_name']} ${((det['confidence'] as num) * 100).toStringAsFixed(0)}%';
+
+      textPainter.text = TextSpan(
+        text: ' $label ',
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+          backgroundColor: Color(0xFFEF4444),
+        ),
+      );
+      textPainter.layout();
+      
+      // Paint text slightly above the box, or inside at the top if at the edge of the screen
+      final double textY = yMin - 12 > 0 ? yMin - 12 : yMin;
+      textPainter.paint(canvas, Offset(xMin, textY));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BoundingBoxPainter oldDelegate) {
+    return oldDelegate.detections != detections ||
+           oldDelegate.frameWidth != frameWidth ||
+           oldDelegate.frameHeight != frameHeight;
   }
 }
