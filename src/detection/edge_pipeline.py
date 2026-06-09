@@ -122,6 +122,124 @@ class FreshFrameGrabber:
             pass
 
 
+def simple_nms(boxes, confidences, classes, iou_threshold=0.45):
+    if len(boxes) == 0:
+        return []
+    indices = sorted(range(len(confidences)), key=lambda i: confidences[i], reverse=True)
+    keep = []
+    while len(indices) > 0:
+        current = indices[0]
+        keep.append(current)
+        if len(indices) == 1:
+            break
+        remaining_indices = []
+        c_box = boxes[current]
+        c_area = (c_box[2] - c_box[0]) * (c_box[3] - c_box[1])
+        for idx in indices[1:]:
+            r_box = boxes[idx]
+            if classes[current] != classes[idx]:
+                remaining_indices.append(idx)
+                continue
+            xx1 = max(c_box[0], r_box[0])
+            yy1 = max(c_box[1], r_box[1])
+            xx2 = min(c_box[2], r_box[2])
+            yy2 = min(c_box[3], r_box[3])
+            w = max(0, xx2 - xx1)
+            h = max(0, yy2 - yy1)
+            intersection = w * h
+            r_area = (r_box[2] - r_box[0]) * (r_box[3] - r_box[1])
+            union = c_area + r_area - intersection
+            iou = intersection / union if union > 0 else 0
+            if iou < iou_threshold:
+                remaining_indices.append(idx)
+        indices = remaining_indices
+    return keep
+
+
+class CentroidTracker:
+    def __init__(self, max_disappeared=30, max_distance=80):
+        self.next_object_id = 1
+        self.objects = {}       # id -> centroid (x, y)
+        self.disappeared = {}   # id -> frame count disappeared
+        self.classes = {}       # id -> class_name
+        self.max_disappeared = max_disappeared
+        self.max_distance = max_distance
+
+    def register(self, centroid, class_name):
+        self.objects[self.next_object_id] = centroid
+        self.disappeared[self.next_object_id] = 0
+        self.classes[self.next_object_id] = class_name
+        self.next_object_id += 1
+
+    def deregister(self, object_id):
+        del self.objects[object_id]
+        del self.disappeared[object_id]
+        del self.classes[object_id]
+
+    def update(self, rects, class_names):
+        if len(rects) == 0:
+            for object_id in list(self.disappeared.keys()):
+                self.disappeared[object_id] += 1
+                if self.disappeared[object_id] > self.max_disappeared:
+                    self.deregister(object_id)
+            return self.objects, self.classes
+
+        input_centroids = np.zeros((len(rects), 2), dtype="int")
+        for (i, (startX, startY, endX, endY)) in enumerate(rects):
+            cX = int((startX + endX) / 2.0)
+            cY = int((startY + endY) / 2.0)
+            input_centroids[i] = (cX, cY)
+
+        if len(self.objects) == 0:
+            for i in range(len(input_centroids)):
+                self.register(input_centroids[i], class_names[i])
+        else:
+            object_ids = list(self.objects.keys())
+            object_centroids = list(self.objects.values())
+
+            # Distance matrix
+            D = np.zeros((len(object_centroids), len(input_centroids)))
+            for i, o_c in enumerate(object_centroids):
+                for j, i_c in enumerate(input_centroids):
+                    D[i, j] = np.linalg.norm(np.array(o_c) - np.array(i_c))
+
+            rows = D.min(axis=1).argsort()
+            cols = D.argmin(axis=1)[rows]
+
+            used_rows = set()
+            used_cols = set()
+
+            for (row, col) in zip(rows, cols):
+                if row in used_rows or col in used_cols:
+                    continue
+
+                if D[row, col] > self.max_distance:
+                    continue
+
+                object_id = object_ids[row]
+                if self.classes[object_id] != class_names[col]:
+                    continue
+
+                self.objects[object_id] = input_centroids[col]
+                self.disappeared[object_id] = 0
+                used_rows.add(row)
+                used_cols.add(col)
+
+            unused_rows = set(range(0, D.shape[0])).difference(used_rows)
+            unused_cols = set(range(0, D.shape[1])).difference(used_cols)
+
+            for row in unused_rows:
+                object_id = object_ids[row]
+                self.disappeared[object_id] += 1
+                if self.disappeared[object_id] > self.max_disappeared:
+                    self.deregister(object_id)
+
+            for col in unused_cols:
+                self.register(input_centroids[col], class_names[col])
+
+        return self.objects, self.classes
+
+
 class EdgePipeline:
     """
     Simulates the entire Jetson Nano Edge compute flow running on the drone:
@@ -134,6 +252,9 @@ class EdgePipeline:
         
         # Initialize cluster engine
         self.cluster_engine = ClusterEngine(db_manager=self.db_manager)
+        
+        # Initialize centroid tracker
+        self.tracker = CentroidTracker()
         
         # Spatial-Temporal Evidence Deduplicator
         self.deduplicator = SpatialTemporalDeduplicator(spatial_threshold_m=10.0, temporal_threshold_s=30.0)
@@ -318,6 +439,79 @@ class EdgePipeline:
         except Exception as e:
             logger.error(f" Failed to load model weights {model_name}: {e}")
 
+    def run_sliced_inference(self, img, slice_size=640, overlap=0.2):
+        """
+        Runs sliced inference (SAHI-like) on the input frame.
+        Slices the frame into overlapping tiles, runs inference on each,
+        maps coordinates back, and performs NMS.
+        """
+        if self.yolo_model is None:
+            return []
+            
+        h, w = img.shape[:2]
+        step_size = int(slice_size * (1 - overlap))
+        
+        raw_boxes = []
+        raw_confs = []
+        raw_classes = []
+        
+        # Iterate sliding window
+        for y in range(0, h - slice_size + step_size, step_size):
+            for x in range(0, w - slice_size + step_size, step_size):
+                y_start = min(y, h - slice_size)
+                x_start = min(x, w - slice_size)
+                
+                patch = img[y_start:y_start+slice_size, x_start:x_start+slice_size]
+                
+                # Inference on patch
+                results = self.yolo_model(
+                    patch,
+                    verbose=False,
+                    classes=[0, 2, 3, 5, 7],
+                    conf=0.25,
+                    iou=0.45,
+                    imgsz=slice_size
+                )
+                
+                # Gather boxes
+                for box in results[0].boxes:
+                    coords = box.xyxy[0].tolist() # x1, y1, x2, y2 relative to patch
+                    conf = float(box.conf[0].item())
+                    cls_id = int(box.cls[0].item())
+                    
+                    # Convert coordinates back to original frame
+                    orig_x1 = coords[0] + x_start
+                    orig_y1 = coords[1] + y_start
+                    orig_x2 = coords[2] + x_start
+                    orig_y2 = coords[3] + y_start
+                    
+                    raw_boxes.append([orig_x1, orig_y1, orig_x2, orig_y2])
+                    raw_confs.append(conf)
+                    raw_classes.append(cls_id)
+                    
+        # Merge boxes via Non-Maximum Suppression
+        keep_indices = simple_nms(raw_boxes, raw_confs, raw_classes, iou_threshold=0.4)
+        
+        # Format detections standardly
+        merged_detections = []
+        cls_map = {0: 'person', 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
+        for idx in keep_indices:
+            box = raw_boxes[idx]
+            conf = raw_confs[idx]
+            cls_id = raw_classes[idx]
+            cls_name = cls_map.get(cls_id, 'jcb')
+            
+            merged_detections.append({
+                'class_name': cls_name,
+                'confidence': conf,
+                'bbox_x_min': int(box[0]),
+                'bbox_y_min': int(box[1]),
+                'bbox_x_max': int(box[2]),
+                'bbox_y_max': int(box[3])
+            })
+            
+        return merged_detections
+
     def check_geofence_trigger(self, drone_lat, drone_lon):
         """Calculates distance to starting point and returns True if inside start geofence."""
         if self.start_lat == 0.0 or self.start_lon == 0.0:
@@ -477,7 +671,9 @@ class EdgePipeline:
             cv2.rectangle(annotated_canvas, (x1-2, y1-2), (x2+2, y2+2), (255, 255, 255, 20), 1)
             
             # Bounding box tag details (filtering indicators mapped out)
-            label = f"{cls.upper()} {conf*100:.0f}%"
+            track_id = det.get('track_id', 0)
+            track_str = f" #{track_id}" if track_id > 0 else ""
+            label = f"{cls.upper()}{track_str} {conf*100:.0f}%"
             cv2.putText(annotated_canvas, label, (x1, y1-8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
             
             # Draw tiny coordinate text below box
@@ -634,43 +830,88 @@ class EdgePipeline:
                     self.load_yolo_model(self.target_model)
                     
                     if webcam_frame is not None:
-                        # Run real YOLOv8 inference on camera frame!
-                        # Detect person (0), car (2), motorcycle (3), bus (5), truck (7)
-                        results = self.yolo_model(
-                            webcam_frame,
-                            verbose=False,
-                            classes=[0, 2, 3, 5, 7],
-                            conf=0.30,
-                            iou=0.45,
-                            imgsz=640
-                        )
-                        cls_map = {0: 'person', 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
-                        
-                        raw_detections = []
-                        for box in results[0].boxes:
-                            coords = box.xyxy[0].tolist()
-                            conf = float(box.conf[0].item())
-                            cls_id = int(box.cls[0].item())
-                            
-                            cls_name = cls_map.get(cls_id, 'jcb')
-                            
-                            # Assign simulated coordinate offset close to current drone position for DB/clustering
+                        # Decide whether to use sliced inference or normal inference based on altitude (>50m AGL)
+                        if alt > 50.0:
+                            logger.info(f" [Detection] High altitude detected ({alt:.1f}m > 50m). Running sliced inference...")
+                            raw_detections = self.run_sliced_inference(webcam_frame)
+                        else:
+                            logger.info(f" [Detection] Low altitude detected ({alt:.1f}m <= 50m). Running standard inference...")
+                            results = self.yolo_model(
+                                webcam_frame,
+                                verbose=False,
+                                classes=[0, 2, 3, 5, 7],
+                                conf=0.30,
+                                iou=0.45,
+                                imgsz=640
+                            )
+                            cls_map = {0: 'person', 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
+                            raw_detections = []
+                            for box in results[0].boxes:
+                                coords = box.xyxy[0].tolist()
+                                conf = float(box.conf[0].item())
+                                cls_id = int(box.cls[0].item())
+                                cls_name = cls_map.get(cls_id, 'jcb')
+                                raw_detections.append({
+                                    'class_name': cls_name,
+                                    'confidence': conf,
+                                    'bbox_x_min': int(coords[0]),
+                                    'bbox_y_min': int(coords[1]),
+                                    'bbox_x_max': int(coords[2]),
+                                    'bbox_y_max': int(coords[3])
+                                })
+
+                        # Assign GPS coordinates
+                        for det in raw_detections:
                             offset_lat = random.uniform(-0.0001, 0.0001)
                             offset_lon = random.uniform(-0.0001, 0.0001)
+                            det['lat'] = lat + offset_lat
+                            det['lon'] = lon + offset_lon
+
+                        # Centroid Tracking
+                        rects = []
+                        class_names = []
+                        for det in raw_detections:
+                            rects.append((det['bbox_x_min'], det['bbox_y_min'], det['bbox_x_max'], det['bbox_y_max']))
+                            class_names.append(det['class_name'])
+                        
+                        tracked_objects, tracked_classes = self.tracker.update(rects, class_names)
+                        for det in raw_detections:
+                            cX = int((det['bbox_x_min'] + det['bbox_x_max']) / 2.0)
+                            cY = int((det['bbox_y_min'] + det['bbox_y_max']) / 2.0)
+                            best_id = 0
+                            min_dist = float('inf')
+                            for obj_id, centroid in tracked_objects.items():
+                                if tracked_classes[obj_id] == det['class_name']:
+                                    dist = np.linalg.norm(np.array([cX, cY]) - centroid)
+                                    if dist < min_dist and dist < 80:
+                                        min_dist = dist
+                                        best_id = obj_id
+                            det['track_id'] = best_id
+
+                        # Custom Rendering to include Track IDs
+                        overlay_img = webcam_frame.copy()
+                        for det in raw_detections:
+                            x1, y1, x2, y2 = det['bbox_x_min'], det['bbox_y_min'], det['bbox_x_max'], det['bbox_y_max']
+                            cls = det['class_name']
+                            conf = det['confidence']
+                            track_id = det.get('track_id', 0)
                             
-                            raw_detections.append({
-                                'class_name': cls_name,
-                                'confidence': conf,
-                                'bbox_x_min': int(coords[0]),
-                                'bbox_y_min': int(coords[1]),
-                                'bbox_x_max': int(coords[2]),
-                                'bbox_y_max': int(coords[3]),
-                                'lat': lat + offset_lat,
-                                'lon': lon + offset_lon
-                            })
+                            color = (0, 240, 255)
+                            if cls == "person":
+                                color = (0, 230, 100)
+                            elif cls == "jcb":
+                                color = (0, 180, 245)
+                                
+                            cv2.rectangle(overlay_img, (x1, y1), (x2, y2), color, 2)
+                            cv2.rectangle(overlay_img, (x1-2, y1-2), (x2+2, y2+2), (255, 255, 255, 20), 1)
                             
-                        # Generate annotated camera overlay
-                        overlay_img = results[0].plot()
+                            track_str = f" #{track_id}" if track_id > 0 else ""
+                            label = f"{cls.upper()}{track_str} {conf*100:.0f}%"
+                            cv2.putText(overlay_img, label, (x1, y1-8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+                            
+                            coord_str = f"{det['lat']:.5f}, {det['lon']:.5f}"
+                            cv2.putText(overlay_img, coord_str, (x1, y2+15), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1, cv2.LINE_AA)
+
                         # Draw forensic telemetry banner at bottom
                         forensic_bar_h = 36
                         canvas = np.zeros((overlay_img.shape[0] + forensic_bar_h, overlay_img.shape[1], 3), dtype=np.uint8)
@@ -687,9 +928,30 @@ class EdgePipeline:
                         raw_jpeg = raw_buf.tobytes()
                         overlay_jpeg = overlay_buf.tobytes()
                     else:
-                        # Waiting for wireless stream to connect/stabilize
-                        logger.info(" [Camera] Waiting for active wireless drone stream frames...")
-                        raw_detections = []
+                        # Generate simulated detections for testing/dry-runs
+                        logger.info(" [Camera] Waiting/Simulating drone stream frames...")
+                        raw_detections = self.generate_simulated_detections(lat, lon, step)
+                        
+                        # Tracking for simulated detections
+                        rects = []
+                        class_names = []
+                        for det in raw_detections:
+                            rects.append((det['bbox_x_min'], det['bbox_y_min'], det['bbox_x_max'], det['bbox_y_max']))
+                            class_names.append(det['class_name'])
+                        
+                        tracked_objects, tracked_classes = self.tracker.update(rects, class_names)
+                        for det in raw_detections:
+                            cX = int((det['bbox_x_min'] + det['bbox_x_max']) / 2.0)
+                            cY = int((det['bbox_y_min'] + det['bbox_y_max']) / 2.0)
+                            best_id = 0
+                            min_dist = float('inf')
+                            for obj_id, centroid in tracked_objects.items():
+                                if tracked_classes[obj_id] == det['class_name']:
+                                    dist = np.linalg.norm(np.array([cX, cY]) - centroid)
+                                    if dist < min_dist and dist < 80:
+                                        min_dist = dist
+                                        best_id = obj_id
+                            det['track_id'] = best_id
                     
                     # 3. Spatial Aggregation & DBSCAN Clustering
                     incidents = self.cluster_engine.cluster_detections(raw_detections, eps_meters=60.0)
