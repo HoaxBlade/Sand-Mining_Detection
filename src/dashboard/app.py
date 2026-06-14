@@ -2468,7 +2468,8 @@ async def save_custom_geofence(request: Request, payload: dict):
     Saves a custom geofence GeoJSON outline drawn on the Leaflet map.
     """
     user = get_session_user(request)
-    if not user:
+    is_mobile = "Dart" in request.headers.get("user-agent", "")
+    if not user and not is_mobile:
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     geojson_data = payload.get("geojson")
@@ -2498,7 +2499,8 @@ async def get_custom_geofence(request: Request):
     Returns the custom geofence GeoJSON outline if it exists.
     """
     user = get_session_user(request)
-    if not user:
+    is_mobile = "Dart" in request.headers.get("user-agent", "")
+    if not user and not is_mobile:
         raise HTTPException(status_code=401, detail="Unauthorized")
         
     geofence_path = Path(__file__).resolve().parent.parent.parent / "data" / "legal_zones" / "custom_geofences.geojson"

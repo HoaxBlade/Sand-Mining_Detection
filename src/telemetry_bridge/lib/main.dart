@@ -1282,14 +1282,15 @@ class _DashboardPageState extends State<DashboardPage> {
                             height: 32,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: const Color(0xFFEF4444).withValues(alpha: 0.2),
+                              color: (_isInsideIllegalZone ? const Color(0xFFEF4444) : const Color(0xFF10B981)).withValues(alpha: 0.2),
                             ),
                           ),
-                          const Icon(
+                          Icon(
                             Icons.navigation,
-                            color: Color(0xFFEF4444),
+                            color: _isInsideIllegalZone ? const Color(0xFFEF4444) : const Color(0xFF10B981),
                             size: 24,
                           ),
+
                         ],
                       ),
                     ),
@@ -1838,7 +1839,9 @@ class _DashboardPageState extends State<DashboardPage> {
                           detections: _detections,
                           frameWidth: _frameWidth,
                           frameHeight: _frameHeight,
+                          isViolation: _isInsideIllegalZone,
                         ),
+
                       ),
                     ),
                   ),
@@ -2347,11 +2350,13 @@ class _BoundingBoxPainter extends CustomPainter {
   final List<Map<String, dynamic>> detections;
   final int frameWidth;
   final int frameHeight;
+  final bool isViolation;
 
   _BoundingBoxPainter({
     required this.detections,
     required this.frameWidth,
     required this.frameHeight,
+    required this.isViolation,
   });
 
   @override
@@ -2362,7 +2367,7 @@ class _BoundingBoxPainter extends CustomPainter {
     final double scaleY = size.height / frameHeight;
 
     final paintBox = Paint()
-      ..color = const Color(0xFFEF4444) // Neon/vibrant Red for bounding box
+      ..color = isViolation ? const Color(0xFFEF4444) : const Color(0xFF10B981) // Red if violation, Green if safe/OK
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.0;
 
@@ -2383,11 +2388,11 @@ class _BoundingBoxPainter extends CustomPainter {
 
       textPainter.text = TextSpan(
         text: ' $label ',
-        style: const TextStyle(
+        style: TextStyle(
           color: Colors.white,
           fontSize: 10,
           fontWeight: FontWeight.bold,
-          backgroundColor: Color(0xFFEF4444),
+          backgroundColor: isViolation ? const Color(0xFFEF4444) : const Color(0xFF10B981),
         ),
       );
       textPainter.layout();
@@ -2402,6 +2407,8 @@ class _BoundingBoxPainter extends CustomPainter {
   bool shouldRepaint(covariant _BoundingBoxPainter oldDelegate) {
     return oldDelegate.detections != detections ||
            oldDelegate.frameWidth != frameWidth ||
-           oldDelegate.frameHeight != frameHeight;
+           oldDelegate.frameHeight != frameHeight ||
+           oldDelegate.isViolation != isViolation;
   }
 }
+
