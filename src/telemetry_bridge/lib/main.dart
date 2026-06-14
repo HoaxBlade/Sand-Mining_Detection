@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 void main() {
   runApp(const TelemetryBridgeApp());
@@ -44,7 +46,6 @@ class _DashboardPageState extends State<DashboardPage> {
 
   // Connection states
   bool _isBroadcasting = false;
-  bool _isSimulating = false; // Default simulator to OFF on boot
   bool _isDJIConnected = false;
   final String _serverUrl = 'https://sandmining.nielitbhubaneswar.in/api/edge/sync';
 
@@ -56,6 +57,17 @@ class _DashboardPageState extends State<DashboardPage> {
   List<Map<String, dynamic>> _detections = [];
   int _frameWidth = 1280;
   int _frameHeight = 720;
+
+  // Map and Geofencing state variables
+  final List<LatLng> _drawnPoints = [];
+  bool _isDrawingMode = false;
+  List<List<LatLng>> _customGeofencePolygons = [];
+  List<List<LatLng>> _riverBufferPolygons = [];
+  bool _isInsideIllegalZone = false;
+  bool _isSatelliteMode = true;
+  bool _autoFollowDrone = true;
+  int _currentTab = 0;
+  final MapController _mapController = MapController();
 
   // Extract base URL dynamically from _serverUrl
   String get _baseUrl {
@@ -85,8 +97,6 @@ class _DashboardPageState extends State<DashboardPage> {
   double _focusDotOpacity = 0.0;
   Timer? _focusDotTimer;
 
-  // Simulator helper variables
-  double _simAngle = 0.0;
   Timer? _timer;
 
   // Log terminal variables
@@ -102,6 +112,9 @@ class _DashboardPageState extends State<DashboardPage> {
     _setupPlatformChannel();
     // Fetch cloud models and config on boot
     _fetchCloudModelsAndConfig();
+    // Fetch mapping/geofence geometries
+    _fetchRiverBufferZone();
+    _fetchCustomGeofences();
   }
 
   Future<void> _fetchCloudModelsAndConfig() async {
@@ -219,41 +232,38 @@ class _DashboardPageState extends State<DashboardPage> {
         final bool connected = call.arguments as bool;
         setState(() {
           _isDJIConnected = connected;
-          if (connected) {
-            // Auto disable simulator upon actual physical controller plug-in!
-            _isSimulating = false;
-          } else {
-            // Clear state back to waiting if not in simulation mode
-            if (!_isSimulating) {
-              _lat = 0.0;
-              _lon = 0.0;
-              _altitude = -1.0;
-              _speed = -1.0;
-              _battery = -1;
-            }
+          if (!connected) {
+            _lat = 0.0;
+            _lon = 0.0;
+            _altitude = -1.0;
+            _speed = -1.0;
+            _battery = -1;
           }
         });
         _addLog('[AIRCRAFT] Drone connection state updated: ${connected ? "CONNECTED" : "DISCONNECTED"}');
         break;
       case 'onTelemetryUpdate':
         final Map data = call.arguments as Map;
-        if (!_isSimulating) {
-          setState(() {
-            _lat = data['lat'] as double;
-            _lon = data['lon'] as double;
-            _altitude = data['altitude'] as double;
-            // Native speed is in m/s, convert to km/h for pilot HUD display
-            _speed = (data['speed'] as double) * 3.6;
-          });
-        }
+        setState(() {
+          _lat = data['lat'] as double;
+          _lon = data['lon'] as double;
+          _altitude = data['altitude'] as double;
+          // Native speed is in m/s, convert to km/h for pilot HUD display
+          _speed = (data['speed'] as double) * 3.6;
+          
+          _checkGeofenceViolation();
+          if (_autoFollowDrone && _lat != 0.0 && _lon != 0.0) {
+            try {
+              _mapController.move(LatLng(_lat, _lon), _mapController.camera.zoom);
+            } catch (_) {}
+          }
+        });
         break;
       case 'onBatteryUpdate':
         final int batPercent = call.arguments as int;
-        if (!_isSimulating) {
-          setState(() {
-            _battery = batPercent;
-          });
-        }
+        setState(() {
+          _battery = batPercent;
+        });
         break;
       case 'onRTMPStatusUpdate':
         final Map data = call.arguments as Map;
@@ -303,34 +313,245 @@ class _DashboardPageState extends State<DashboardPage> {
 
   void _startTelemetryLoop() {
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_isSimulating) {
-        _runSimulationStep();
-      }
-
       if (_isBroadcasting) {
         _sendTelemetryToServer();
       }
     });
   }
 
-  void _runSimulationStep() {
-    setState(() {
-      // Simulate slow battery drain
-      if (math.Random().nextDouble() < 0.05) {
-        _battery = math.max(15, _battery - 1);
+  bool _isPointInPolygon(LatLng point, List<LatLng> polygon) {
+    if (polygon.length < 3) return false;
+    bool inside = false;
+    final double x = point.longitude;
+    final double y = point.latitude;
+    int j = polygon.length - 1;
+    for (int i = 0; i < polygon.length; i++) {
+      final double xi = polygon[i].longitude;
+      final double yi = polygon[i].latitude;
+      final double xj = polygon[j].longitude;
+      final double yj = polygon[j].latitude;
+      
+      final bool intersect = ((yi > y) != (yj > y)) &&
+          (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+      j = i;
+    }
+    return inside;
+  }
+
+  void _checkGeofenceViolation() {
+    if (_lat == 0.0 && _lon == 0.0) {
+      if (_isInsideIllegalZone) {
+        setState(() {
+          _isInsideIllegalZone = false;
+        });
       }
+      return;
+    }
+    
+    final currentPoint = LatLng(_lat, _lon);
+    
+    // Check legal river buffer zones
+    for (final poly in _riverBufferPolygons) {
+      if (_isPointInPolygon(currentPoint, poly)) {
+        if (!_isInsideIllegalZone) {
+          setState(() {
+            _isInsideIllegalZone = true;
+          });
+        }
+        return;
+      }
+    }
+    
+    // Check custom geofences
+    for (final poly in _customGeofencePolygons) {
+      if (_isPointInPolygon(currentPoint, poly)) {
+        if (!_isInsideIllegalZone) {
+          setState(() {
+            _isInsideIllegalZone = true;
+          });
+        }
+        return;
+      }
+    }
+    
+    if (_isInsideIllegalZone) {
+      setState(() {
+        _isInsideIllegalZone = false;
+      });
+    }
+  }
 
-      // Simulate movement along a wave path (Brahmaputra River path)
-      _simAngle += 0.03;
-      _lat = 26.12555 + 0.015 * math.sin(_simAngle);
-      _lon = 91.81244 + 0.025 * _simAngle; // Slowly drifts Eastward
+  List<List<LatLng>> _parseGeoJsonPolygons(Map<String, dynamic> geojson) {
+    List<List<LatLng>> polygons = [];
+    final features = geojson['features'];
+    if (features is List) {
+      for (final feature in features) {
+        final geometry = feature['geometry'];
+        if (geometry is Map) {
+          final type = geometry['type'];
+          final coordinates = geometry['coordinates'];
+          if (type == 'Polygon' && coordinates is List) {
+            for (final ring in coordinates) {
+              if (ring is List) {
+                List<LatLng> points = [];
+                for (final coord in ring) {
+                  if (coord is List && coord.length >= 2) {
+                    final lon = (coord[0] as num).toDouble();
+                    final lat = (coord[1] as num).toDouble();
+                    points.add(LatLng(lat, lon));
+                  }
+                }
+                if (points.isNotEmpty) {
+                  polygons.add(points);
+                }
+              }
+            }
+          } else if (type == 'MultiPolygon' && coordinates is List) {
+            for (final polygon in coordinates) {
+              if (polygon is List) {
+                for (final ring in polygon) {
+                  if (ring is List) {
+                    List<LatLng> points = [];
+                    for (final coord in ring) {
+                      if (coord is List && coord.length >= 2) {
+                        final lon = (coord[0] as num).toDouble();
+                        final lat = (coord[1] as num).toDouble();
+                        points.add(LatLng(lat, lon));
+                      }
+                    }
+                    if (points.isNotEmpty) {
+                      polygons.add(points);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return polygons;
+  }
 
-      // altitude hover
-      _altitude = 65.0 + 5.0 * math.sin(_simAngle * 2.5);
+  Future<void> _fetchRiverBufferZone() async {
+    try {
+      final response = await http.get(Uri.parse('$_baseUrl/data/legal_zones/river_buffer_1km.geojson'));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final polys = _parseGeoJsonPolygons(data);
+        setState(() {
+          _riverBufferPolygons = polys;
+        });
+        _addLog('[MAP] River buffer zone loaded: ${polys.length} polygons.');
+      } else {
+        _addLog('[MAP WARNING] River buffer not found on server (using centerline only).');
+      }
+    } catch (e) {
+      _addLog('[MAP ERROR] Connection error fetching river buffer: $e');
+    }
+  }
 
-      // speed hover
-      _speed = 18.5 + 4.0 * math.cos(_simAngle * 1.5);
-    });
+  Future<void> _fetchCustomGeofences() async {
+    try {
+      final response = await http.get(Uri.parse('$_baseUrl/api/zone/geofence'));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final polys = _parseGeoJsonPolygons(data);
+        setState(() {
+          _customGeofencePolygons = polys;
+        });
+        _addLog('[MAP] Custom geofences loaded: ${polys.length} polygons.');
+        _checkGeofenceViolation();
+      } else {
+        _addLog('[MAP ERROR] Failed to fetch custom geofences: Status ${response.statusCode}');
+      }
+    } catch (e) {
+      _addLog('[MAP ERROR] Connection error fetching custom geofences: $e');
+    }
+  }
+
+  Future<void> _saveCustomGeofence() async {
+    if (_drawnPoints.length < 3) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please draw a polygon with at least 3 points!'),
+          backgroundColor: Color(0xFFEF4444),
+        ),
+      );
+      return;
+    }
+
+    // Build the geojson structure
+    List<List<double>> coordinates = [];
+    for (final pt in _drawnPoints) {
+      coordinates.add([pt.longitude, pt.latitude]);
+    }
+    // Close polygon
+    coordinates.add([_drawnPoints.first.longitude, _drawnPoints.first.latitude]);
+
+    final geojson = {
+      "type": "FeatureCollection",
+      "features": [
+        {
+          "type": "Feature",
+          "properties": {},
+          "geometry": {
+            "type": "Polygon",
+            "coordinates": [coordinates]
+          }
+        }
+      ]
+    };
+
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/zone/geofence'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({"geojson": geojson}),
+      );
+
+      if (response.statusCode == 200) {
+        _addLog('[MAP] Custom geofences synced to server.');
+        setState(() {
+          _isDrawingMode = false;
+          _drawnPoints.clear();
+        });
+        await _fetchCustomGeofences();
+      } else {
+        _addLog('[MAP ERROR] Failed to save geofence: Status ${response.statusCode}');
+      }
+    } catch (e) {
+      _addLog('[MAP ERROR] Connection error saving geofence: $e');
+    }
+  }
+
+  Future<void> _deleteCustomGeofence() async {
+    final emptyGeojson = {
+      "type": "FeatureCollection",
+      "features": []
+    };
+
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/zone/geofence'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({"geojson": emptyGeojson}),
+      );
+
+      if (response.statusCode == 200) {
+        _addLog('[MAP] Custom geofences cleared on server.');
+        setState(() {
+          _drawnPoints.clear();
+          _customGeofencePolygons.clear();
+        });
+        _checkGeofenceViolation();
+      } else {
+        _addLog('[MAP ERROR] Failed to clear geofence: Status ${response.statusCode}');
+      }
+    } catch (e) {
+      _addLog('[MAP ERROR] Connection error clearing geofence: $e');
+    }
   }
 
   Future<void> _sendTelemetryToServer() async {
@@ -401,9 +622,6 @@ class _DashboardPageState extends State<DashboardPage> {
     if (_isDJIConnected) {
       return const Color(0xFF10B981); // Emerald Green: Active Drone Telemetry Sync
     }
-    if (_isSimulating) {
-      return const Color(0xFF38BDF8); // Neon Blue: Route Simulator Active
-    }
     return const Color(0xFFF59E0B); // Amber Orange: Waiting for Physical Drone Accessory
   }
 
@@ -449,24 +667,14 @@ class _DashboardPageState extends State<DashboardPage> {
             icon: const Icon(Icons.refresh),
             onPressed: () {
               setState(() {
-                if (_isSimulating) {
-                  _lat = 26.12555;
-                  _lon = 91.81244;
-                  _simAngle = 0.0;
-                  _battery = 100;
-                  _altitude = 65.0;
-                  _speed = 18.5;
-                  _addLog('Telemetry simulator reset to home coordinates.');
-                } else {
-                  if (!_isDJIConnected) {
-                    _lat = 0.0;
-                    _lon = 0.0;
-                    _battery = -1;
-                    _altitude = -1.0;
-                    _speed = -1.0;
-                  }
-                  _addLog('HUD reset to unacquired state (waiting for drone connection).');
+                if (!_isDJIConnected) {
+                  _lat = 0.0;
+                  _lon = 0.0;
+                  _battery = -1;
+                  _altitude = -1.0;
+                  _speed = -1.0;
                 }
+                _addLog('HUD reset to unacquired state (waiting for drone connection).');
               });
             },
           ),
@@ -474,53 +682,60 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
       body: _isCameraFullscreen
           ? _buildRawFeedMonitor()
-          : SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              child: Column(
-                children: [
-                  // Control switches panel
+          : IndexedStack(
+              index: _currentTab,
+              children: [
+                SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Column(
+                    children: [
+                      if (_isInsideIllegalZone)
+                        Container(
+                          margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEF4444).withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFEF4444), width: 2),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.warning_amber_rounded, color: Color(0xFFEF4444), size: 24),
+                              const SizedBox(width: 12),
+                              const Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'GEOFENCE VIOLATION WARNING',
+                                      style: TextStyle(
+                                        color: Color(0xFFEF4444),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12,
+                                        letterSpacing: 1.1,
+                                        fontFamily: 'monospace',
+                                      ),
+                                    ),
+                                    SizedBox(height: 2),
+                                    Text(
+                                      'AIRCRAFT IS INSIDE AN ENFORCED RESTRICTED ZONE',
+                                      style: TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      // Control switches panel
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             color: const Color(0xFF0F172A),
             child: Column(
               children: [
-                Card(
-                  margin: EdgeInsets.zero,
-                  color: const Color(0xFF1E293B),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  child: SwitchListTile(
-                    title: const Text('Route Simulation Mode', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
-                    subtitle: const Text('Generates mock flight telemetry for virtual mapping tests', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                    value: _isSimulating,
-                    onChanged: (val) {
-                      setState(() {
-                        _isSimulating = val;
-                        if (val) {
-                          // Warm up simulator variables instantly
-                          _lat = 26.12555;
-                          _lon = 91.81244;
-                          _battery = 100;
-                          _altitude = 65.0;
-                          _speed = 18.5;
-                          _simAngle = 0.0;
-                        } else {
-                          // Clear back to unacquired state if no real DJI product connected
-                          if (!_isDJIConnected) {
-                            _lat = 0.0;
-                            _lon = 0.0;
-                            _battery = -1;
-                            _altitude = -1.0;
-                            _speed = -1.0;
-                          }
-                        }
-                      });
-                      _addLog('Telemetry simulator ${val ? "ENABLED" : "DISABLED"}');
-                    },
-                    activeThumbColor: const Color(0xFF38BDF8),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  ),
-                ),
-                const SizedBox(height: 8),
                 Card(
                   margin: EdgeInsets.zero,
                   color: const Color(0xFF1E293B),
@@ -941,6 +1156,441 @@ class _DashboardPageState extends State<DashboardPage> {
           ],
         ),
       ),
+      _buildMapView(),
+      ],
+    ),
+      bottomNavigationBar: _isCameraFullscreen
+          ? null
+          : BottomNavigationBar(
+              currentIndex: _currentTab,
+              onTap: (index) {
+                setState(() {
+                  _currentTab = index;
+                });
+              },
+              backgroundColor: const Color(0xFF0F172A),
+              selectedItemColor: const Color(0xFF38BDF8),
+              unselectedItemColor: Colors.grey,
+              items: const [
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.dashboard_customize_outlined),
+                  activeIcon: Icon(Icons.dashboard_customize),
+                  label: 'HUD Dashboard',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.map_outlined),
+                  activeIcon: Icon(Icons.map),
+                  label: 'Geofence Map',
+                ),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildMapView() {
+    // Determine target center for the map
+    LatLng initialCenter = LatLng(26.12555, 91.81244);
+    if (_lat != 0.0 && _lon != 0.0) {
+      initialCenter = LatLng(_lat, _lon);
+    }
+
+    return Stack(
+      children: [
+        FlutterMap(
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: initialCenter,
+            initialZoom: 13.0,
+            onTap: (tapPosition, point) {
+              if (_isDrawingMode) {
+                setState(() {
+                  _drawnPoints.add(point);
+                });
+              }
+            },
+          ),
+          children: [
+            // Tile Layer (Satellite vs Dark Mode)
+            TileLayer(
+              urlTemplate: _isSatelliteMode
+                  ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+                  : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{y}/{x}.png',
+              subdomains: const ['a', 'b', 'c', 'd'],
+              userAgentPackageName: 'sq.rogue.telemetry_bridge',
+            ),
+            
+            // Polygons for River Buffer
+            PolygonLayer(
+              polygons: _riverBufferPolygons.map((polyPoints) {
+                return Polygon(
+                  points: polyPoints,
+                  color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                  borderColor: const Color(0xFFF59E0B),
+                  borderStrokeWidth: 2,
+                );
+              }).toList(),
+            ),
+
+            // Polygons for Custom Geofences
+            PolygonLayer(
+              polygons: _customGeofencePolygons.map((polyPoints) {
+                return Polygon(
+                  points: polyPoints,
+                  color: const Color(0xFFEF4444).withValues(alpha: 0.2),
+                  borderColor: const Color(0xFFEF4444),
+                  borderStrokeWidth: 2,
+                );
+              }).toList(),
+            ),
+
+            // Polyline layer for active drawing
+            if (_isDrawingMode && _drawnPoints.isNotEmpty) ...[
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: _drawnPoints,
+                    color: const Color(0xFFA855F7),
+                    strokeWidth: 3,
+                  ),
+                  // Connect last point back to first point if >= 3 points
+                  if (_drawnPoints.length >= 3)
+                    Polyline(
+                      points: [_drawnPoints.last, _drawnPoints.first],
+                      color: const Color(0xFFA855F7).withValues(alpha: 0.5),
+                      strokeWidth: 2,
+                    ),
+                ],
+              ),
+            ],
+
+            // Drone position and active drawing vertex markers
+            MarkerLayer(
+              markers: [
+                // Render drone marker if coordinates are active
+                if (_lat != 0.0 && _lon != 0.0)
+                  Marker(
+                    point: LatLng(_lat, _lon),
+                    width: 40,
+                    height: 40,
+                    child: Transform.rotate(
+                      angle: 0.0,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: const Color(0xFFEF4444).withValues(alpha: 0.2),
+                            ),
+                          ),
+                          const Icon(
+                            Icons.navigation,
+                            color: Color(0xFFEF4444),
+                            size: 24,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                // Render drawing vertex markers
+                if (_isDrawingMode)
+                  ..._drawnPoints.map((LatLng pt) {
+                    final idx = _drawnPoints.indexOf(pt);
+                    return Marker(
+                      point: pt,
+                      width: 16,
+                      height: 16,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: const Color(0xFFA855F7),
+                          border: Border.all(color: Colors.white, width: 1.5),
+                        ),
+                        child: Center(
+                          child: Text(
+                            '${idx + 1}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ],
+        ),
+
+        // TOP HUD Status Overlay
+        Positioned(
+          top: 16,
+          left: 16,
+          right: 16,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F172A).withValues(alpha: 0.85),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: _isInsideIllegalZone ? const Color(0xFFEF4444) : const Color(0xFF334155),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.3),
+                  blurRadius: 10,
+                  spreadRadius: 2,
+                )
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _isInsideIllegalZone ? 'GEOFENCE VIOLATION' : 'GEOFENCE SAFE',
+                        style: TextStyle(
+                          color: _isInsideIllegalZone ? const Color(0xFFEF4444) : const Color(0xFF10B981),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                          letterSpacing: 1.1,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        (_lat == 0.0 && _lon == 0.0)
+                            ? 'GPS: Unacquired'
+                            : 'GPS: ${_lat.toStringAsFixed(5)}, ${_lon.toStringAsFixed(5)}',
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _isInsideIllegalZone
+                        ? const Color(0xFFEF4444).withValues(alpha: 0.2)
+                        : const Color(0xFF10B981).withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    _isInsideIllegalZone ? 'VIOLATION' : 'OK',
+                    style: TextStyle(
+                      color: _isInsideIllegalZone ? const Color(0xFFEF4444) : const Color(0xFF10B981),
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // BOTTOM LEFT: Geofence Drawing / Editing Panel
+        Positioned(
+          bottom: 16,
+          left: 16,
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F172A).withValues(alpha: 0.85),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF334155), width: 1),
+            ),
+            child: Row(
+              children: [
+                if (!_isDrawingMode) ...[
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFA855F7), // Purple/indigo for edit
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    icon: const Icon(Icons.edit_location_alt, size: 14),
+                    label: const Text('Draw Fence', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                    onPressed: () {
+                      setState(() {
+                        _isDrawingMode = true;
+                        _drawnPoints.clear();
+                      });
+                      _addLog('[MAP] Geofence drawing mode enabled. Tap map to add points.');
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFEF4444), // Red for clear
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    icon: const Icon(Icons.delete_forever, size: 14),
+                    label: const Text('Clear Server', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                    onPressed: () {
+                      showDialog(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          backgroundColor: const Color(0xFF1E293B),
+                          title: const Text('Clear Custom Geofence?', style: TextStyle(color: Colors.white)),
+                          content: const Text(
+                            'Are you sure you want to delete all custom geofences from the server?',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                          actions: [
+                            TextButton(
+                              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+                              onPressed: () => Navigator.of(ctx).pop(),
+                            ),
+                            TextButton(
+                              child: const Text('Delete', style: TextStyle(color: Color(0xFFEF4444))),
+                              onPressed: () {
+                                Navigator.of(ctx).pop();
+                                _deleteCustomGeofence();
+                              },
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ] else ...[
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF10B981), // Green for save
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    icon: const Icon(Icons.check, size: 14),
+                    label: const Text('Save', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                    onPressed: _saveCustomGeofence,
+                  ),
+                  const SizedBox(width: 8),
+                  if (_drawnPoints.isNotEmpty) ...[
+                    IconButton(
+                      icon: const Icon(Icons.undo, color: Colors.amber, size: 18),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: () {
+                        setState(() {
+                          _drawnPoints.removeLast();
+                        });
+                      },
+                      tooltip: 'Undo last point',
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF64748B), // Slate for cancel
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    icon: const Icon(Icons.close, size: 14),
+                    label: const Text('Cancel', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                    onPressed: () {
+                      setState(() {
+                        _isDrawingMode = false;
+                        _drawnPoints.clear();
+                      });
+                      _addLog('[MAP] Geofence drawing cancelled.');
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+
+        // BOTTOM RIGHT: Map Control Buttons
+        Positioned(
+          bottom: 16,
+          right: 16,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // Auto Follow Toggle
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                child: FloatingActionButton.small(
+                  heroTag: 'btn_follow',
+                  backgroundColor: _autoFollowDrone ? const Color(0xFF38BDF8) : const Color(0xFF0F172A),
+                  foregroundColor: _autoFollowDrone ? Colors.white : const Color(0xFF38BDF8),
+                  onPressed: () {
+                    setState(() {
+                      _autoFollowDrone = !_autoFollowDrone;
+                    });
+                    _addLog('[MAP] Drone auto-follow ${_autoFollowDrone ? "ENABLED" : "DISABLED"}.');
+                  },
+                  tooltip: 'Toggle Drone Auto-Follow',
+                  child: Icon(_autoFollowDrone ? Icons.gps_fixed : Icons.gps_not_fixed),
+                ),
+              ),
+              
+              // Recenter on Drone Button
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                child: FloatingActionButton.small(
+                  heroTag: 'btn_recenter',
+                  backgroundColor: const Color(0xFF0F172A),
+                  foregroundColor: const Color(0xFF38BDF8),
+                  onPressed: () {
+                    if (_lat != 0.0 && _lon != 0.0) {
+                      _mapController.move(LatLng(_lat, _lon), _mapController.camera.zoom);
+                      _addLog('[MAP] Map camera recentered on drone.');
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Cannot recenter: No active drone GPS coordinates!'),
+                          backgroundColor: Color(0xFFEF4444),
+                        ),
+                      );
+                    }
+                  },
+                  tooltip: 'Recenter on Drone',
+                  child: const Icon(Icons.my_location),
+                ),
+              ),
+              
+              // Toggle Satellite Mode
+              FloatingActionButton.small(
+                heroTag: 'btn_style',
+                backgroundColor: const Color(0xFF0F172A),
+                foregroundColor: const Color(0xFF38BDF8),
+                onPressed: () {
+                  setState(() {
+                    _isSatelliteMode = !_isSatelliteMode;
+                  });
+                  _addLog('[MAP] Layer style toggled to ${_isSatelliteMode ? "SATELLITE" : "STREETS (DARK)"}.');
+                },
+                tooltip: 'Toggle Map Style',
+                child: Icon(_isSatelliteMode ? Icons.layers : Icons.satellite_alt),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1044,11 +1694,11 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _simulateTakeoff() {
-    if (!_isDJIConnected && !_isSimulating) {
+    if (!_isDJIConnected) {
       _addLog('[AIRCRAFT ERROR] Takeoff rejected: drone disconnected.');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Takeoff rejected: Connect drone or enable Simulation Mode!'),
+          content: Text('Takeoff rejected: Connect drone!'),
           backgroundColor: Color(0xFFEF4444),
         ),
       );
@@ -1073,7 +1723,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _simulateRTH() {
-    if (!_isDJIConnected && !_isSimulating) {
+    if (!_isDJIConnected) {
       _addLog('[AIRCRAFT ERROR] Return-to-Home rejected: drone disconnected.');
       return;
     }
@@ -1109,14 +1759,10 @@ class _DashboardPageState extends State<DashboardPage> {
     final double currentSpeed = _speed;
     final int currentBat = _battery;
 
-    final double horizonOffset = _isSimulating 
-        ? 15.0 * math.sin(_simAngle * 2.0) 
-        : (_isRtmpStreaming ? 5.0 * math.sin(DateTime.now().millisecond / 100.0) : 0.0);
-    final double rollAngle = _isSimulating 
-        ? 0.1 * math.cos(_simAngle) 
-        : (_isRtmpStreaming ? 0.03 * math.cos(DateTime.now().millisecond / 200.0) : 0.0);
+    final double horizonOffset = _isRtmpStreaming ? 5.0 * math.sin(DateTime.now().millisecond / 100.0) : 0.0;
+    final double rollAngle = _isRtmpStreaming ? 0.03 * math.cos(DateTime.now().millisecond / 200.0) : 0.0;
 
-    final bool isStreamActive = _isRtmpStreaming || _isSimulating;
+    final bool isStreamActive = _isRtmpStreaming;
 
     return Container(
       margin: _isCameraFullscreen ? EdgeInsets.zero : const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1158,7 +1804,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
                 
                 // Native Camera View
-                if (_isDJIConnected || _isSimulating)
+                if (_isDJIConnected)
                   Positioned.fill(
                     child: defaultTargetPlatform == TargetPlatform.iOS
                         ? const UiKitView(
@@ -1184,7 +1830,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
 
                 // Real-time AI bounding box overlay
-                if ((_isDJIConnected || _isSimulating) && _isAiDetectionEnabled && _detections.isNotEmpty)
+                if (_isDJIConnected && _isAiDetectionEnabled && _detections.isNotEmpty)
                   Positioned.fill(
                     child: IgnorePointer(
                       child: CustomPaint(
@@ -1214,8 +1860,8 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ),
 
-                // Standby state overlay (if not connected and not simulating)
-                if (!_isDJIConnected && !_isSimulating)
+                // Standby state overlay (if not connected)
+                if (!_isDJIConnected)
                   Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -1254,7 +1900,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
 
                 // ── DJI FLY-STYLE PREMIUM HUD OVERLAYS ──
-                if (_isDJIConnected || _isSimulating) ...[
+                if (_isDJIConnected) ...[
                   // 1. Sleek Top Status Bar
                   Positioned(
                     top: 6,
@@ -1282,9 +1928,9 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ),
                               ),
                               const SizedBox(width: 4),
-                              Text(
-                                _isSimulating ? 'SIM MODE' : 'N MODE',
-                                style: const TextStyle(
+                              const Text(
+                                'N MODE',
+                                style: TextStyle(
                                   color: Colors.white,
                                   fontSize: 8,
                                   fontWeight: FontWeight.bold,
@@ -1299,19 +1945,19 @@ class _DashboardPageState extends State<DashboardPage> {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                           decoration: BoxDecoration(
-                            color: (_lat == 0.0 && !_isSimulating) 
+                            color: (_lat == 0.0) 
                                 ? const Color(0xFFFBBF24).withValues(alpha: 0.85)
                                 : Colors.black.withValues(alpha: 0.6),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
-                            (!_isDJIConnected && !_isSimulating)
+                            !_isDJIConnected
                                 ? 'AIRCRAFT DISCONNECTED'
-                                : ((_lat == 0.0 && !_isSimulating)
+                                : (_lat == 0.0
                                     ? 'ACQUIRING GPS LOCK...'
-                                    : (_isSimulating ? 'READY TO FLY (SIM)' : 'READY TO FLY (GPS)')),
+                                    : 'READY TO FLY (GPS)'),
                             style: TextStyle(
-                              color: (_lat == 0.0 && !_isSimulating) ? const Color(0xFF1C1917) : const Color(0xFF10B981),
+                              color: (_lat == 0.0) ? const Color(0xFF1C1917) : const Color(0xFF10B981),
                               fontSize: 8.5,
                               fontWeight: FontWeight.bold,
                               fontFamily: 'monospace',
@@ -1327,7 +1973,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             Icon(Icons.satellite_alt, color: Colors.white.withValues(alpha: 0.9), size: 11),
                             const SizedBox(width: 2),
                             Text(
-                              (_lat == 0.0 && !_isSimulating) ? '0' : '18',
+                              (_lat == 0.0) ? '0' : '18',
                               style: const TextStyle(color: Colors.white, fontSize: 8.5, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
                             ),
                             const SizedBox(width: 8),
@@ -1502,7 +2148,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'D  ${(currentLat == 0.0 && !_isSimulating) ? "0.0" : "12.4"} M',
+                                'D  ${(currentLat == 0.0) ? "0.0" : "12.4"} M',
                                 style: const TextStyle(color: Colors.white, fontSize: 8.5, fontWeight: FontWeight.w900, fontFamily: 'monospace'),
                               ),
                               const SizedBox(height: 2),
@@ -1542,7 +2188,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 ],
 
                 // ── GPS No-Signal Banner (top-right corner, only when physical drone connected but no coordinates) ──
-                if (_isDJIConnected && !_isSimulating && _lat == 0.0)
+                if (_isDJIConnected && _lat == 0.0)
                   Positioned(
                     top: 36,
                     right: 8,
