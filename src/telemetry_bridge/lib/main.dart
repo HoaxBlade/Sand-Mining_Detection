@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart';
+
 
 void main() {
   runApp(const TelemetryBridgeApp());
@@ -69,6 +71,10 @@ class _DashboardPageState extends State<DashboardPage> {
   int _currentTab = 0;
   final MapController _mapController = MapController();
 
+  // Violation/Incident points for map display
+  final List<ViolationPoint> _violationPoints = [];
+  Timer? _incidentsFetchTimer;
+
   // Extract base URL dynamically from _serverUrl
   String get _baseUrl {
     try {
@@ -115,6 +121,8 @@ class _DashboardPageState extends State<DashboardPage> {
     // Fetch mapping/geofence geometries
     _fetchRiverBufferZone();
     _fetchCustomGeofences();
+    _fetchIncidents();
+    _startIncidentsFetchLoop();
   }
 
   Future<void> _fetchCloudModelsAndConfig() async {
@@ -286,6 +294,7 @@ class _DashboardPageState extends State<DashboardPage> {
   void dispose() {
     _timer?.cancel();
     _focusDotTimer?.cancel();
+    _incidentsFetchTimer?.cancel();
     _scrollController.dispose();
     _rtmpController.dispose();
     super.dispose();
@@ -471,6 +480,157 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  void _startIncidentsFetchLoop() {
+    _incidentsFetchTimer?.cancel();
+    _incidentsFetchTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+      _fetchIncidents();
+    });
+  }
+
+  Future<void> _fetchIncidents() async {
+    try {
+      final response = await http.get(Uri.parse('$_baseUrl/api/incidents')).timeout(const Duration(seconds: 4));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        final List<ViolationPoint> fetchedPoints = [];
+        for (var item in data) {
+          final lat = (item['centroid_latitude'] as num?)?.toDouble();
+          final lon = (item['centroid_longitude'] as num?)?.toDouble();
+          if (lat != null && lon != null && lat != 0.0 && lon != 0.0) {
+            fetchedPoints.add(ViolationPoint(
+              id: item['id']?.toString() ?? '',
+              coordinate: LatLng(lat, lon),
+              timestamp: item['timestamp']?.toString() ?? '',
+              source: 'server',
+              severity: item['severity']?.toString() ?? 'MEDIUM',
+              illegalZone: item['illegal_zone'] as bool? ?? false,
+            ));
+          }
+        }
+        setState(() {
+          _violationPoints.removeWhere((p) => p.source == 'server');
+          _violationPoints.addAll(fetchedPoints);
+        });
+      }
+    } catch (e) {
+      _addLog('[MAP ERROR] Connection error fetching incidents: $e');
+    }
+  }
+
+  void _showViolationDetails(ViolationPoint vp) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E293B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (BuildContext context) {
+        final isViolation = vp.illegalZone;
+        return Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Incident #${vp.id}',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF38BDF8),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: vp.severity == 'EXTREME' || vp.severity == 'SEVERE' || vp.severity == 'CRITICAL'
+                          ? const Color(0xFFEF4444).withValues(alpha: 0.2)
+                          : const Color(0xFFF59E0B).withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: vp.severity == 'EXTREME' || vp.severity == 'SEVERE' || vp.severity == 'CRITICAL'
+                            ? const Color(0xFFEF4444)
+                            : const Color(0xFFF59E0B),
+                        width: 1,
+                      ),
+                    ),
+                    child: Text(
+                      vp.severity,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: vp.severity == 'EXTREME' || vp.severity == 'SEVERE' || vp.severity == 'CRITICAL'
+                            ? const Color(0xFFEF4444)
+                            : const Color(0xFFF59E0B),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Coordinates: ${vp.coordinate.latitude.toStringAsFixed(6)}, ${vp.coordinate.longitude.toStringAsFixed(6)}',
+                style: const TextStyle(fontSize: 14, fontFamily: 'monospace'),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Time: ${vp.timestamp}',
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  const Text('Status: ', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                  Text(
+                    isViolation ? 'Geofence Violation' : 'Safe/OK',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: isViolation ? const Color(0xFFEF4444) : const Color(0xFF10B981),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    final url = 'https://www.google.com/maps/dir/?api=1&destination=${vp.coordinate.latitude},${vp.coordinate.longitude}';
+                    try {
+                      if (await canLaunchUrl(Uri.parse(url))) {
+                        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+                      } else {
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(content: Text('Could not open map navigation.')),
+                        );
+                      }
+                    } catch (e) {
+                      _addLog('[NAV ERROR] Failed to launch navigation: $e');
+                    }
+                  },
+                  icon: const Icon(Icons.directions, color: Colors.white),
+                  label: const Text('Get Directions', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF10B981),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _saveCustomGeofence() async {
     if (_drawnPoints.length < 3) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -597,6 +757,29 @@ class _DashboardPageState extends State<DashboardPage> {
                 _detections = List<Map<String, dynamic>>.from(data['detections']);
                 _frameWidth = data['frame_width'] ?? 1280;
                 _frameHeight = data['frame_height'] ?? 720;
+
+                // Add new local violation point if we are inside illegal zone and have active detections
+                if (_isInsideIllegalZone && _detections.isNotEmpty && _lat != 0.0 && _lon != 0.0) {
+                  final newPt = LatLng(_lat, _lon);
+                  bool isTooClose = false;
+                  for (final vp in _violationPoints) {
+                    final dist = const Distance().distance(vp.coordinate, newPt);
+                    if (dist < 15.0) {
+                      isTooClose = true;
+                      break;
+                    }
+                  }
+                  if (!isTooClose) {
+                    _violationPoints.add(ViolationPoint(
+                      id: 'L-${DateTime.now().millisecondsSinceEpoch}',
+                      coordinate: newPt,
+                      timestamp: DateTime.now().toLocal().toString().split('.').first,
+                      source: 'local',
+                      severity: 'CRITICAL',
+                      illegalZone: true,
+                    ));
+                  }
+                }
               });
             }
           } catch (_) {
@@ -1323,6 +1506,44 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     );
                   }),
+
+                // Render violation point markers
+                ..._violationPoints.map((ViolationPoint vp) {
+                  return Marker(
+                    point: vp.coordinate,
+                    width: 30,
+                    height: 30,
+                    child: GestureDetector(
+                      onTap: () => _showViolationDetails(vp),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Container(
+                            width: 20,
+                            height: 20,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: const Color(0xFFEF4444).withValues(alpha: 0.3),
+                              border: Border.all(color: Colors.white, width: 1.5),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFFEF4444).withValues(alpha: 0.5),
+                                  blurRadius: 6,
+                                  spreadRadius: 2,
+                                )
+                              ],
+                            ),
+                          ),
+                          const Icon(
+                            Icons.warning,
+                            color: Colors.white,
+                            size: 10,
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
               ],
             ),
           ],
@@ -2410,5 +2631,23 @@ class _BoundingBoxPainter extends CustomPainter {
            oldDelegate.frameHeight != frameHeight ||
            oldDelegate.isViolation != isViolation;
   }
+}
+
+class ViolationPoint {
+  final String id;
+  final LatLng coordinate;
+  final String timestamp;
+  final String source; // 'local' or 'server'
+  final String severity;
+  final bool illegalZone;
+
+  ViolationPoint({
+    required this.id,
+    required this.coordinate,
+    required this.timestamp,
+    required this.source,
+    required this.severity,
+    required this.illegalZone,
+  });
 }
 

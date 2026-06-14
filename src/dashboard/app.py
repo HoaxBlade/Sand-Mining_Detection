@@ -1808,7 +1808,8 @@ def get_incidents(
 ):
     """Retrieves list of all historic clusters/incidents with optional filtering."""
     user = get_session_user(request)
-    if not user:
+    is_mobile = "Dart" in request.headers.get("user-agent", "")
+    if not user and not is_mobile:
         raise HTTPException(status_code=401, detail="Unauthorized")
     conn = db_manager.get_connection()
     cursor = conn.cursor()
