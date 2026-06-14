@@ -33,7 +33,9 @@ class ClusterEngine:
         
         # Load the pre-calculated 1km illegal zone polygon
         self.illegal_zone_gdf = None
+        self.custom_geofence_path = self.project_root / "data" / "legal_zones" / "custom_geofences.geojson"
         self._load_buffer_zone()
+
 
     def _load_buffer_zone(self):
         """Loads the river buffer GeoJSON for fast spatial contains queries."""
@@ -66,14 +68,25 @@ class ClusterEngine:
             logger.warning("Buffer rebuild failed  keeping previous zone geometry")
 
     def is_in_illegal_zone(self, lat, lon):
-        """Returns True if the coordinate is inside the 500m buffer zone."""
-        if self.illegal_zone_gdf is None:
-            return True # Fallback to warning if no file exists
-            
+        """Returns True if the coordinate is inside the 500m buffer zone or any custom geofences."""
         point = Point(lon, lat)  # Shapely uses (x, y) = (lon, lat)
-        # Check if the point is within any geometry in the buffer GeoDataFrame
-        contains = self.illegal_zone_gdf.geometry.contains(point).any()
-        return bool(contains)
+        
+        contains = False
+        if self.illegal_zone_gdf is not None:
+            contains = self.illegal_zone_gdf.geometry.contains(point).any()
+            
+        custom_contains = False
+        if self.custom_geofence_path.exists():
+            try:
+                custom_gdf = gpd.read_file(self.custom_geofence_path)
+                if custom_gdf.crs != "EPSG:4326":
+                    custom_gdf = custom_gdf.to_crs("EPSG:4326")
+                custom_contains = custom_gdf.geometry.contains(point).any()
+            except Exception as e:
+                logger.error(f"Error checking custom geofences: {e}")
+                
+        return bool(contains or custom_contains)
+
 
     def calculate_severity(self, detections):
         """

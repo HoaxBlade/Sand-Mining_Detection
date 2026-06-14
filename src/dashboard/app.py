@@ -2462,6 +2462,53 @@ async def set_zone_radius(request: Request, data: dict):
     return {"status": "ok", "radius_m": radius_m}
 
 
+@app.post("/api/zone/geofence")
+async def save_custom_geofence(request: Request, payload: dict):
+    """
+    Saves a custom geofence GeoJSON outline drawn on the Leaflet map.
+    """
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    geojson_data = payload.get("geojson")
+    if not geojson_data:
+        raise HTTPException(status_code=400, detail="Missing geojson data")
+        
+    geofence_path = Path(__file__).resolve().parent.parent.parent / "data" / "legal_zones" / "custom_geofences.geojson"
+    geofence_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(geofence_path, "w", encoding="utf-8") as f:
+        json.dump(geojson_data, f)
+        
+    logger.info("Custom geofence outline saved successfully by operator.")
+    
+    # Broadcast to all websocket clients
+    await manager.broadcast({
+        "type": "custom_geofence_update",
+        "payload": geojson_data
+    })
+    
+    return {"status": "ok"}
+
+
+@app.get("/api/zone/geofence")
+async def get_custom_geofence(request: Request):
+    """
+    Returns the custom geofence GeoJSON outline if it exists.
+    """
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+        
+    geofence_path = Path(__file__).resolve().parent.parent.parent / "data" / "legal_zones" / "custom_geofences.geojson"
+    if geofence_path.exists():
+        with open(geofence_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"type": "FeatureCollection", "features": []}
+
+
+
 # WebSocket endpoint
 # WebSocket endpoint
 @app.websocket("/ws")
