@@ -533,16 +533,19 @@ class _DashboardPageState extends State<DashboardPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'Incident #${vp.id}',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF38BDF8),
+                  Flexible(
+                    child: Text(
+                      'Incident #${vp.id}',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF38BDF8),
+                      ),
                     ),
                   ),
+                  const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
@@ -600,17 +603,19 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: ElevatedButton.icon(
                   onPressed: () async {
                     Navigator.pop(context);
-                    final url = 'https://www.google.com/maps/dir/?api=1&destination=${vp.coordinate.latitude},${vp.coordinate.longitude}';
+                    final lat = vp.coordinate.latitude;
+                    final lon = vp.coordinate.longitude;
+                    // geo: URI is handled natively by Android Maps apps
+                    final geoUri = Uri.parse('geo:$lat,$lon?q=$lat,$lon(Violation)');
+                    final mapsUrl = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lon');
                     try {
-                      if (await canLaunchUrl(Uri.parse(url))) {
-                        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-                      } else {
-                        ScaffoldMessenger.of(this.context).showSnackBar(
-                          const SnackBar(content: Text('Could not open map navigation.')),
-                        );
+                      await launchUrl(geoUri, mode: LaunchMode.externalApplication);
+                    } catch (_) {
+                      try {
+                        await launchUrl(mapsUrl, mode: LaunchMode.externalApplication);
+                      } catch (e) {
+                        _addLog('[NAV ERROR] Failed to launch navigation: $e');
                       }
-                    } catch (e) {
-                      _addLog('[NAV ERROR] Failed to launch navigation: $e');
                     }
                   },
                   icon: const Icon(Icons.directions, color: Colors.white),
